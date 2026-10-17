@@ -882,8 +882,30 @@ async fn a_pointer_only_plan_refresh_keeps_a_held_gesture() {
         "a pointer-only refresh must not end the hold that caused it"
     );
 
+    // A delivery-only change is real dispatch state: it cancels the old lane
+    // without cycling firmware diversion, even when every action is unchanged.
+    let mut relaned = moved;
+    relaned.dispatch.scroll_delivery = openlogi_core::scroll::ScrollDelivery::ShiftWheel;
+    assert_eq!(session.target(), &relaned.target);
+    reconcile_session(
+        &mut session,
+        Some((&relaned.target, &relaned.dispatch)),
+        &mut dispatcher,
+    );
+    assert!(session.is_active(), "a lane change must not rearm capture");
+    assert!(
+        !dispatcher.holds_gesture_press(&id, ButtonId::GestureButton),
+        "a delivery change must cancel the prior session's dispatch state"
+    );
+    dispatcher.dispatch(
+        &id,
+        session.dispatch(),
+        CapturedInput::ButtonDown(ButtonId::GestureButton),
+    );
+    assert!(dispatcher.holds_gesture_press(&id, ButtonId::GestureButton));
+
     // A real binding change still ends every admitted press.
-    let mut rebound = moved;
+    let mut rebound = relaned;
     rebound.dispatch.gesture_bindings.insert(
         ButtonId::GestureButton,
         [(GestureDirection::Left, Action::Copy)].into(),
