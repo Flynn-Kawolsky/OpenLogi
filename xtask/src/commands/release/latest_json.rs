@@ -42,6 +42,13 @@ pub(crate) struct Args {
     /// `.msi` and installs it via gpui-updater's staged msiexec flow.
     #[arg(long)]
     include_windows: bool,
+    /// Publish a Windows-only manifest for a fork's GitHub Releases, for
+    /// example `owner/OpenLogi`: asset URLs use GitHub's
+    /// `/releases/download/<tag>/` layout under `--base-url`, the release link
+    /// points at that repository, and the macOS DMG gate is replaced by a
+    /// Windows one. Implies `--include-windows`.
+    #[arg(long)]
+    github_repo: Option<String>,
 }
 
 /// The built-in update engine's manifest. A release's feed record holds the
@@ -90,13 +97,37 @@ struct Classified {
 
 pub(crate) fn run(args: &Args) -> Result<()> {
     let tag = ReleaseTag::parse(&args.tag)?;
-    let release_base = update_feed::release_url(&args.base_url, &tag);
-    let assets = collect_assets(&args.dist, &release_base, args.include_windows)?;
+    let release_base = if args.github_repo.is_some() {
+        format!(
+            "{}/releases/download/{tag}",
+            args.base_url.trim_end_matches('/')
+        )
+    } else {
+        update_feed::release_url(&args.base_url, &tag)
+    };
+    let assets = collect_assets(
+        &args.dist,
+        &release_base,
+        args.include_windows || args.github_repo.is_some(),
+    )?;
     // The DMGs are the publish gate's guaranteed artifact set; the Windows
     // legs are best-effort per arch (a failed leg publishes without them), so
-    // their absence must not sink the whole manifest.
-    if !assets.iter().any(|asset| asset.os == "macos") {
-        bail!("no architecture-specific DMG assets found for manifest");
+    // their absence must not sink the whole manifest. A fork's Windows-only
+    // feed gates on its MSIs instead.
+    let (gate_os, gate_format, gate_error) = if args.github_repo.is_some() {
+        ("windows", "msi", "no Windows MSI assets found for manifest")
+    } else {
+        (
+            "macos",
+            "dmg",
+            "no architecture-specific DMG assets found for manifest",
+        )
+    };
+    if !assets
+        .iter()
+        .any(|asset| asset.os == gate_os && asset.format == gate_format)
+    {
+        bail!(gate_error);
     }
 
     let manifest = Manifest {
@@ -108,7 +139,10 @@ pub(crate) fn run(args: &Args) -> Result<()> {
         published_at: OffsetDateTime::from(SystemTime::now())
             .format(&Rfc3339)
             .context("could not format current timestamp")?,
-        release_url: update_feed::release_page_url(&tag),
+        release_url: args.github_repo.as_deref().map_or_else(
+            || update_feed::release_page_url(&tag),
+            |repo| format!("https://github.com/{repo}/releases/tag/{tag}"),
+        ),
         assets,
     };
 
