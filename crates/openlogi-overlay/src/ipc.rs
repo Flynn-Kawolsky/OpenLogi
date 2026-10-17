@@ -17,7 +17,9 @@ use std::{
 use openlogi_core::action_ring::DISPLAY_LIFETIME;
 use openlogi_core::binding::ActionRingSlot;
 use openlogi_ipc::client::{self, ConnectError, Observer};
-use openlogi_ipc::{ActionRingInvocation, AgentClient, ClientKind, RingObservation};
+use openlogi_ipc::{
+    ActionRingInvocation, AgentClient, ClientKind, OVERLAY_IDLE_EXIT_CODE, RingObservation,
+};
 use succession::Standing;
 use tarpc::context;
 use tokio::sync::mpsc;
@@ -114,16 +116,59 @@ pub(crate) fn stand_down(because: &str) -> ! {
 
 /// How long to keep reaching for an agent before giving up and exiting.
 ///
-/// Nothing else bounds this process's life. The agent starts it detached and
+/// [`IDLE_EXIT_AFTER`] only runs while an agent answers, so nothing else bounds
+/// the life of a helper whose agent is gone. The agent starts it detached and
 /// never kills it — the menu-bar Quit is a `process::exit`, which runs no
 /// destructors — and every other exit path here needs a *replacement* agent to
 /// answer. So an agent that stops for good leaves its helper reconnecting
 /// forever; one was found still at it three days on. Giving up costs almost
-/// nothing: the helper only exists to keep process-start latency off the first
-/// ring press, which is worth exactly zero while no agent is running, and the
-/// supervisor starts a fresh one within its restart backoff once an agent is
-/// back.
+/// nothing: a helper is worth exactly zero while no agent is running, and an
+/// agent that is back starts a fresh one when it next has a ring to draw.
 const GIVE_UP_AFTER: Duration = Duration::from_mins(1);
+
+/// How long a connected helper stays up with nothing to show before leaving.
+///
+/// Staying costs a resident GPUI process, renderer and vsync wakeups included,
+/// for a ring that may not come. Leaving costs one process start on the next
+/// ring: the agent starts a fresh helper, which joins late and reads the ring
+/// already published. Ten minutes keeps a burst of use on one warm process.
+const IDLE_EXIT_AFTER: Duration = Duration::from_mins(10);
+
+/// When this helper was last given something to show, and so when it may
+/// leave for want of anything else.
+#[derive(Clone, Copy, Debug)]
+struct IdleClock {
+    since: Instant,
+}
+
+impl IdleClock {
+    const fn new(now: Instant) -> Self {
+        Self { since: now }
+    }
+
+    /// The agent published a ring change: a ring opened, or one closed.
+    const fn touch(&mut self, now: Instant) {
+        self.since = now;
+    }
+
+    /// When the helper leaves unless touched again first. No ring can still be
+    /// showing then: each closes within `DISPLAY_LIFETIME` of the change that
+    /// opened it, far inside the idle period.
+    fn deadline(self) -> Instant {
+        self.since + IDLE_EXIT_AFTER
+    }
+}
+
+/// Exit for want of anything to show, releasing the role with
+/// [`OVERLAY_IDLE_EXIT_CODE`] so the agent starts the next helper on demand.
+#[expect(
+    clippy::exit,
+    reason = "the IPC tasks run off the GPUI main thread and cannot return a status to `main`, which is parked in the application run loop; the exit status is how the agent tells idleness from a crash"
+)]
+fn leave_idle() -> ! {
+    info!("no Actions Ring for {IDLE_EXIT_AFTER:?} — exiting until the next one");
+    std::process::exit(OVERLAY_IDLE_EXIT_CODE)
+}
 
 /// How long to wait between attempts to reach an agent.
 const RETRY_PERIOD: Duration = Duration::from_secs(1);
@@ -169,6 +214,7 @@ impl InvocationLink {
 
 async fn observe_invocations(tx: mpsc::UnboundedSender<Option<ActionRingInvocation>>) {
     let mut link = InvocationLink::default();
+    let mut idle = IdleClock::new(Instant::now());
     loop {
         if matches!(&link, InvocationLink::Reconnecting { .. }) {
             if let Some(client) = connect().await {
@@ -188,11 +234,16 @@ async fn observe_invocations(tx: mpsc::UnboundedSender<Option<ActionRingInvocati
         let InvocationLink::Observing(observer) = &mut link else {
             continue;
         };
-        match observer.next().await {
+        let Ok(answer) = tokio::time::timeout_at(idle.deadline().into(), observer.next()).await
+        else {
+            leave_idle();
+        };
+        match answer {
             // The hold elapsing with nothing new, or a stale reply: still
             // alive, nothing to show.
             Ok(None) => {}
             Ok(Some(ring)) => {
+                idle.touch(Instant::now());
                 if tx.send(ring.invocation).is_err() {
                     return;
                 }

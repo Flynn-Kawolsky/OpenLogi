@@ -35,7 +35,7 @@ use crate::session::{
 };
 
 fn main() -> Result<()> {
-    openlogi_core::logging::init_stderr();
+    openlogi_core::logging::init_with_log_file("overlay");
 
     openlogi_core::locale::activate(None);
     // Held for the whole run: dropping it hands the role to the replacement.

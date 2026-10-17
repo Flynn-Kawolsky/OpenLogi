@@ -206,7 +206,7 @@ impl Booted {
 struct Wanted(Booted);
 
 impl Wanted {
-    /// The arming point: the tray may show, the overlay may start,
+    /// The arming point: the tray may show, the overlay supervisor starts,
     /// permissions may prompt, devices may open.
     fn arm(self) -> Armed {
         let Booted {
@@ -222,7 +222,6 @@ impl Wanted {
         let _ = armed_tx.send(());
         #[cfg(target_os = "macos")]
         armed_session::record();
-        overlay::spawn();
         prompt_missing_accessibility(capture_mouse_events);
 
         let Core {
@@ -237,6 +236,7 @@ impl Wanted {
         // Closing the channel turns post-arming declarations into no-ops in
         // the server's `declare_client` handler.
         drop(demand);
+        let overlay = start_overlay(&inputs);
         Armed {
             running: Running {
                 orchestrator,
@@ -245,6 +245,7 @@ impl Wanted {
                 event_monitor,
                 inputs,
                 ring_haptics,
+                overlay,
                 signals,
                 shutdown_requests,
                 hidpp_watchers: WatcherFleet::Inactive,
@@ -254,6 +255,13 @@ impl Wanted {
             },
         }
     }
+}
+
+/// Start the overlay supervisor, parked until a ring opens or a device in hand
+/// can open one.
+fn start_overlay(inputs: &InputServices) -> overlay::Overlay {
+    let ring = Arc::clone(&inputs.ring);
+    overlay::Overlay::start(move || ring.is_showing())
 }
 
 /// An armed agent ready to start its watcher fleets.
@@ -271,6 +279,9 @@ struct Running {
     event_monitor: Arc<EventMonitor>,
     inputs: InputServices,
     ring_haptics: server::RingHapticPlayer,
+    /// Starts the Actions Ring overlay when a ring opens, or ahead of time
+    /// while a device in hand can open one.
+    overlay: overlay::Overlay,
     signals: ShutdownSignals,
     shutdown_requests: ShutdownRequests,
     hidpp_watchers: WatcherFleet,
@@ -300,6 +311,10 @@ impl Armed {
         running.restart_hidpp_watchers();
         let (mut watchers, inventory_refresh) = startup::spawn_state_watchers(&running.shared);
         let mut ring = running.inputs.ring.subscribe();
+        // The orchestrator republishes the pre-warm answer only when it
+        // changes; the first answer may predate this loop.
+        let mut ring_prewarm = running.shared.ring_prewarm.clone();
+        running.overlay.prewarm(*ring_prewarm.borrow_and_update());
 
         info!("openlogi-agent started");
         loop {
@@ -327,6 +342,9 @@ impl Armed {
                 }
                 Ok(()) = ring.changed() => {
                     running.apply_held_pointer().await;
+                }
+                Ok(()) = ring_prewarm.changed() => {
+                    running.overlay.prewarm(*ring_prewarm.borrow_and_update());
                 }
                 else => break,
             }
@@ -506,6 +524,7 @@ impl Running {
             // clear it, after which plays are accepted without feedback.
             self.ring_haptics.arm(session.haptic_route.clone());
             self.inputs.ring.begin(session);
+            self.overlay.ring_opened();
         }
     }
 

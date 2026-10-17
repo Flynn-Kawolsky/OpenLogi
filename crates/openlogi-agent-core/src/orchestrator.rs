@@ -48,6 +48,7 @@ use crate::watchers::keyboard::{KeyboardSpec, SharedKeyboardSpec};
 use crate::{DpiCycleState, DpiCycles};
 
 mod devices;
+mod ring_demand;
 
 #[cfg(test)]
 use devices::reapply_targets;
@@ -147,6 +148,10 @@ pub struct SharedHandles {
     /// The running inventory watcher's refresh handle, published at arming;
     /// `None` while no watcher runs.
     inventory_refresh: Arc<RwLock<Option<InventoryRefresh>>>,
+    /// Whether an online device has a binding that opens its Actions Ring:
+    /// the overlay pre-warm answer, from the config in memory. Republished
+    /// only when the answer changes, not with every pointer or focus move.
+    pub ring_prewarm: watch::Receiver<bool>,
 }
 
 impl SharedHandles {
@@ -365,6 +370,7 @@ pub struct Orchestrator {
     capture_plans_tx: watch::Sender<Arc<CapturePublication>>,
     keyboard_spec_tx: watch::Sender<Option<Arc<KeyboardSpec>>>,
     host_switch_links_tx: watch::Sender<Arc<Vec<HostSwitchLink>>>,
+    ring_prewarm_tx: watch::Sender<bool>,
     shared: SharedHandles,
     /// The state the GUI observes. Every mutator below that changes one of its
     /// facts republishes here, so the cell cannot go stale behind a new code
@@ -411,6 +417,7 @@ impl Orchestrator {
             watch::channel(Arc::new(CapturePublication::default()));
         let (keyboard_spec_tx, keyboard_spec) = watch::channel(None);
         let (host_switch_links_tx, host_switch_links) = watch::channel(Arc::new(Vec::new()));
+        let (ring_prewarm_tx, ring_prewarm) = watch::channel(false);
         let shared = SharedHandles {
             device_io: hardware.device_io(),
             channel_pool: hardware.channel_pool(),
@@ -436,6 +443,7 @@ impl Orchestrator {
             backlight_order: WriteOrder::default(),
             host_name_order: WriteOrder::default(),
             inventory_refresh: Arc::new(RwLock::new(None)),
+            ring_prewarm,
         };
         let orch = Self {
             config,
@@ -457,12 +465,14 @@ impl Orchestrator {
             capture_plans_tx,
             keyboard_spec_tx,
             host_switch_links_tx,
+            ring_prewarm_tx,
             shared,
             observable,
         };
         orch.rebuild();
         orch.observable
             .set_launch_at_login(orch.config.app_settings.launch_at_login);
+        crate::watchers::pointer::set_profile_target(orch.config.app_settings.mouse_profile_target);
         orch
     }
 
@@ -672,6 +682,20 @@ impl Orchestrator {
             host_switch_links(&self.config, &self.devices),
         );
         publish_optional_arc_if_changed(&self.keyboard_spec_tx, self.keyboard_spec_for());
+        self.publish_ring_prewarm();
+    }
+
+    /// Publish whether an online device opens its Actions Ring
+    /// ([`SharedHandles::ring_prewarm`]); an unchanged answer wakes nobody.
+    fn publish_ring_prewarm(&self) {
+        let wanted = self.devices.iter().any(|dev| {
+            dev.online && ring_demand::opens_ring(&self.config, &dev.config_key, dev.capabilities)
+        });
+        self.ring_prewarm_tx.send_if_modified(|published| {
+            let changed = *published != wanted;
+            *published = wanted;
+            changed
+        });
     }
 
     fn publish_capture_plans(&self) {
@@ -1252,6 +1276,9 @@ impl Orchestrator {
         self.apply_changed_fn_locks(&previous);
         self.apply_enabled_os_layouts(&previous);
         self.reapply_light_settings();
+        // Focused mode ignores pointer contexts, so the watcher parks; a
+        // switch back to pointer mode resumes it with an immediate query.
+        crate::watchers::pointer::set_profile_target(self.config.app_settings.mouse_profile_target);
     }
 
     /// Put each keyboard whose "keep OS layout" just took effect — turned on,

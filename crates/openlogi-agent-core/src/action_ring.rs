@@ -21,13 +21,15 @@ use tokio::time::Instant;
 
 /// Slack between the window closing and the session expiring.
 ///
-/// The two clocks do not start together: a session is stamped in `begin`,
-/// while the overlay's timer starts only once the long poll has delivered the
-/// invocation and the window is up. Giving them equal durations expired the
-/// session *before* the ring the user could still click disappeared, and a
-/// click landing in that tail returned `SessionNotFound` — the window closed
-/// and the action silently did not run. This covers that gap plus the click's
-/// round-trip back.
+/// The two clocks do not start together: a session is stamped in `begin` and
+/// again when the long poll first delivers it ([`ActionRingManager::observe`]),
+/// while the overlay's timer starts only once the window is up. Giving them
+/// equal durations expired the session *before* the ring the user could still
+/// click disappeared, and a click landing in that tail returned
+/// `SessionNotFound` — the window closed and the action silently did not run.
+/// This covers the window coming up plus the click's round-trip back. The
+/// delivery stamp keeps a helper started by the press itself — process start,
+/// IPC connect, a restart backoff — out of that budget.
 const SESSION_GRACE: Duration = Duration::from_secs(3);
 
 const SESSION_LIFETIME: Duration = DISPLAY_LIFETIME.saturating_add(SESSION_GRACE);
@@ -196,13 +198,37 @@ impl ActionRingManager {
     }
 
     /// Serve one [`Agent::observe_action_ring`](openlogi_ipc::Agent::observe_action_ring).
+    ///
+    /// Delivering a session to an observer that had not seen it restarts the
+    /// session's lifetime, so the time a helper took to start and connect is
+    /// not taken from the ring it then draws.
     pub async fn observe(&self, since: Generation) -> RingObservation {
         let mut rx = self.published.subscribe();
         let changed = rx.wait_for(|observed| observed.generation != since);
-        match tokio::time::timeout(OBSERVE_HOLD, changed).await {
+        let observed = match tokio::time::timeout(OBSERVE_HOLD, changed).await {
             Ok(Ok(observed)) => observed.clone(),
             // Hold elapsed, or the manager is gone: answer with what we have.
             Ok(Err(_)) | Err(_) => self.published.borrow().clone(),
+        };
+        if observed.generation != since
+            && let Some(invocation) = &observed.invocation
+        {
+            self.delivered(invocation.session_id);
+        }
+        observed
+    }
+
+    /// Restamp `session_id` as delivered, unless it has already expired: a
+    /// session the agent has given up on stays given up.
+    fn delivered(&self, session_id: u64) {
+        let mut state = self.state();
+        self.expire_and_publish(&mut state);
+        if let Some(session) = state
+            .active
+            .as_mut()
+            .filter(|session| session.invocation.session_id == session_id)
+        {
+            session.opened_at = Instant::now();
         }
     }
 
@@ -509,5 +535,45 @@ mod tests {
         ));
         assert!(ring.has_changed().unwrap(), "expiration must notify");
         assert_eq!(ring.borrow_and_update().invocation, None);
+    }
+
+    /// A helper started by the press itself sees the ring only once it has
+    /// spawned and connected; that delay must not come out of the ring's life.
+    #[tokio::test(start_paused = true)]
+    async fn a_late_delivery_restarts_the_session_lifetime() {
+        let manager = ActionRingManager::default();
+        let invocation = manager.begin(spec());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert_eq!(
+            manager.observe(0).await.invocation,
+            Some(invocation.clone())
+        );
+        tokio::time::advance(SESSION_LIFETIME.saturating_sub(Duration::from_secs(1))).await;
+
+        assert!(
+            manager
+                .hover(invocation.session_id, ActionRingSlot::Top)
+                .is_ok(),
+            "the session lives a full lifetime from its delivery"
+        );
+    }
+
+    /// A long poll answering a generation the overlay has already seen
+    /// delivers nothing, so a connected overlay cannot keep a session alive.
+    #[tokio::test(start_paused = true)]
+    async fn repeated_long_polls_do_not_extend_a_session() {
+        let manager = ActionRingManager::default();
+        let invocation = manager.begin(spec());
+        let seen = manager.observe(0).await.generation;
+        assert!(
+            OBSERVE_HOLD > SESSION_LIFETIME,
+            "this test relies on one hold outlasting the session"
+        );
+        assert_eq!(manager.observe(seen).await.generation, seen);
+
+        assert_eq!(
+            manager.hover(invocation.session_id, ActionRingSlot::Top),
+            Err(ActionRingCommandError::SessionNotFound)
+        );
     }
 }
