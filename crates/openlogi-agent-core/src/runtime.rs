@@ -11,6 +11,7 @@ mod pointer;
 pub mod scroll;
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
@@ -63,6 +64,60 @@ impl ActionDispatchTarget {
             },
             None => safari_pid.map_or(Self::Keyboard, Self::SafariProcess),
         }
+    }
+}
+
+/// An [`Action`] as log lines name it: the variant alone, never its payload —
+/// the text a `TypeText` types, a script, a path, a recorded chord. Unlike
+/// [`Action::label`] it allocates nothing.
+pub(crate) struct ActionName<'a>(pub(crate) &'a Action);
+
+impl fmt::Display for ActionName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self.0 {
+            Action::SetDpiPreset(_) => "SetDpiPreset",
+            Action::CustomShortcut(_) => "CustomShortcut",
+            Action::TypeText(_) => "TypeText",
+            Action::RunAppleScript(_) => "RunAppleScript",
+            Action::RunShellCommand(_) => "RunShellCommand",
+            Action::Workflow(_) => "Workflow",
+            Action::OpenApplication(_) => "OpenApplication",
+            Action::HoldShortcut(_) => "HoldShortcut",
+            Action::TapKeyHoldingModifiers(_) => "TapKeyHoldingModifiers",
+            // Only payload-free variants have a catalog key, and their
+            // derived `Debug` is the bare variant name. A payload variant
+            // added later lands below rather than printing its payload.
+            plain if plain.translation_key().is_some() => return fmt::Debug::fmt(plain, f),
+            _ => "Action",
+        };
+        f.write_str(name)
+    }
+}
+
+/// Lets one report of a recurring condition through per [`Self::INTERVAL`]
+/// and counts the occurrences between, so a condition met on every input
+/// event costs a log line per interval rather than per event.
+#[derive(Default)]
+struct ReportThrottle {
+    last_report: Option<Instant>,
+    unreported: u32,
+}
+
+impl ReportThrottle {
+    const INTERVAL: Duration = Duration::from_secs(5);
+
+    /// Count one occurrence at `now`. When a report is due, returns how many
+    /// occurrences it covers, this one included.
+    fn occur(&mut self, now: Instant) -> Option<u32> {
+        self.unreported = self.unreported.saturating_add(1);
+        if self
+            .last_report
+            .is_some_and(|last| now.duration_since(last) < Self::INTERVAL)
+        {
+            return None;
+        }
+        self.last_report = Some(now);
+        Some(std::mem::take(&mut self.unreported))
     }
 }
 /// Held output owned by accepted press capabilities rather than by a capture
@@ -124,7 +179,7 @@ impl ActionExecutor {
             return;
         }
         let Some(target) = target.resolve(action) else {
-            debug!(action = %action.label(), "mouse action target unavailable or no longer matches — skipped");
+            debug!(action = %ActionName(action), "mouse action target unavailable or no longer matches — skipped");
             return;
         };
 
@@ -152,7 +207,7 @@ impl ActionExecutor {
                     .ok()
                     .and_then(|cycles| cycles.target_for(device_key));
                 if let Some(target) = target {
-                    info!("SmartShift toggle → flipping wheel mode");
+                    debug!("SmartShift toggle → flipping wheel mode");
                     toggle_smartshift_in_background(self.access.op(&target));
                 } else {
                     debug!("no target device — SmartShift toggle skipped");
@@ -177,7 +232,7 @@ impl ActionExecutor {
                         browser_nav_debounce_cancel(reservation);
                     }
                 } else {
-                    info!(action = %action.label(), "browser nav debounced — duplicate dispatch path suppressed");
+                    debug!(action = %ActionName(action), "browser nav debounced — duplicate dispatch path suppressed");
                 }
                 None
             }
@@ -189,14 +244,14 @@ impl ActionExecutor {
         if let Some((dpi, target)) = next {
             // No target: a dev environment without a real device.
             if let Some(target) = target {
-                info!(%dpi, "DPI action → writing to device");
+                debug!(%dpi, "DPI action → writing to device");
                 write_dpi_in_background(self.access.op(&target), dpi);
             } else {
                 debug!(%dpi, "no target device — DPI write skipped");
             }
         } else if matches!(action, Action::CycleDpiPresets | Action::SetDpiPreset(_)) {
-            info!(
-                action = %action.label(),
+            debug!(
+                action = %ActionName(action),
                 "no DPI presets configured for active device — press ignored"
             );
         }
@@ -231,10 +286,10 @@ impl ButtonEventHandler {
                 if let EndReason::Canceled(reason) = reason {
                     match press.control() {
                         PressControl::Button(button) => {
-                            info!(button = %button, ?reason, "button lifecycle canceled");
+                            debug!(button = %button, ?reason, "button lifecycle canceled");
                         }
                         PressControl::Key(keycode) => {
-                            info!(keycode, ?reason, "key lifecycle canceled");
+                            debug!(keycode, ?reason, "key lifecycle canceled");
                         }
                     }
                 }
@@ -708,6 +763,32 @@ mod tests {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0,
             Some(newer)
+        );
+    }
+
+    #[test]
+    fn action_names_never_carry_a_payload() {
+        assert_eq!(ActionName(&Action::BrowserBack).to_string(), "BrowserBack");
+        assert_eq!(
+            ActionName(&Action::TypeText("hunter2".into())).to_string(),
+            "TypeText"
+        );
+        assert_eq!(
+            ActionName(&Action::RunShellCommand("rm -rf ~".into())).to_string(),
+            "RunShellCommand"
+        );
+    }
+
+    #[test]
+    fn a_throttled_report_counts_what_it_held_back() {
+        let mut throttle = ReportThrottle::default();
+        let start = Instant::now();
+        assert_eq!(throttle.occur(start), Some(1));
+        assert_eq!(throttle.occur(start + Duration::from_secs(1)), None);
+        assert_eq!(throttle.occur(start + Duration::from_secs(2)), None);
+        assert_eq!(
+            throttle.occur(start + ReportThrottle::INTERVAL + Duration::from_secs(1)),
+            Some(3)
         );
     }
 }
