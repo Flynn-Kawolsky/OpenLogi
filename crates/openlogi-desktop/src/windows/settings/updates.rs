@@ -332,15 +332,15 @@ mod tests {
         ] {
             assert_eq!(installation_label(Installation::Detected(source)), expected);
         }
-        rust_i18n::set_locale("zh-CN");
-        assert_eq!(installation_label(Installation::Detecting), "检测中…");
+        rust_i18n::set_locale("zh-TW");
+        assert_eq!(installation_label(Installation::Detecting), "偵測中…");
         assert_eq!(
             installation_label(Installation::Detected(InstallationSource::Unknown)),
-            "无法识别"
+            "無法識別"
         );
         assert_eq!(
             installation_label(Installation::Detected(InstallationSource::MacAppBundle)),
-            "macOS 应用包"
+            "macOS 應用程式套件"
         );
         rust_i18n::set_locale("en");
     }
@@ -398,7 +398,7 @@ mod tests {
             assert_source_geometry(&mut visual);
         }
 
-        for (locale, scale) in [("zh-CN", UiScale::Normal), ("de", UiScale::ExtraLarge)] {
+        for (locale, scale) in [("zh-TW", UiScale::Normal), ("en", UiScale::ExtraLarge)] {
             cx.update(|cx| cx.set_global(Installation::Detected(InstallationSource::WindowsMsi)));
             cx.run_until_parked();
             notified.set(false);

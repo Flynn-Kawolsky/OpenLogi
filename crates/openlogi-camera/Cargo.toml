@@ -6,9 +6,19 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Generic Logitech UVC webcam discovery for OpenLogi (AVFoundation on macOS, DirectShow on Windows, V4L2 on Linux)."
+description = "Generic Logitech UVC webcam discovery for OpenLogi (AVFoundation on macOS, optional DirectShow on Windows, V4L2 on Linux)."
 keywords = ["logitech", "uvc", "webcam", "camera", "v4l2"]
 categories = ["hardware-support"]
+
+[features]
+# The Windows backend (Media Foundation capture + DirectShow UVC controls). Off
+# by default in this build: Windows then compiles the same empty stub as other
+# backend-less platforms — no cameras enumerate, so the GUI never shows a camera
+# tab, and the `windows` bindings stay out of the graph. Turn it back on from a
+# binary with `--features openlogi-camera/windows-backend`. macOS and Linux keep
+# their backends unconditionally.
+default = []
+windows-backend = ["dep:windows"]
 
 [dependencies]
 openlogi-device-registry = { workspace = true }
@@ -36,7 +46,7 @@ objc2-io-kit = { workspace = true, features = [
 ] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Media_DirectShow",
     "Win32_Media_MediaFoundation",

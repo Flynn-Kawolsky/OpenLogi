@@ -67,34 +67,34 @@ fn chord_action_labels_resolve() {
     let chord = |text: &str| -> KeyCombo { text.parse().expect("test shortcut must be valid") };
     let label = |action: Action| localized_action_label(&action).to_string();
 
-    rust_i18n::set_locale("zh-CN");
+    rust_i18n::set_locale("zh-TW");
     let hold = label(Action::HoldShortcut(chord("Cmd+Tab")));
     let switcher = label(Action::TapKeyHoldingModifiers(chord("Cmd+Tab")));
     let bare_key = label(Action::TapKeyHoldingModifiers(chord("F5")));
     rust_i18n::set_locale("en");
 
     assert_eq!(hold, "按住 Cmd+Tab");
-    assert_eq!(switcher, "按住 Cmd，点按 Tab");
-    assert_eq!(bare_key, "点按 F5");
+    assert_eq!(switcher, "按住 Cmd，輕點 Tab");
+    assert_eq!(bare_key, "輕點 F5");
 }
 
-/// Czech must resolve in the actual desktop backend, including the pairing
-/// entry point and the authentication instructions.
+/// Traditional Chinese must resolve in the actual desktop backend, including
+/// the pairing entry point and the authentication instructions.
 #[test]
-fn czech_pairing_translations_resolve() {
+fn traditional_chinese_pairing_translations_resolve() {
     assert_eq!(
-        rust_i18n::t!("pairing.add_device", locale = "cs"),
-        "Přidat zařízení"
+        rust_i18n::t!("pairing.add_device", locale = "zh-TW"),
+        "新增裝置"
     );
     assert_eq!(
         rust_i18n::t!(
             "pairing.keyboard_pairing_passkey_instructions",
-            locale = "cs"
+            locale = "zh-TW"
         ),
-        "Na nové klávesnici napište tento kód a stiskněte Enter."
+        "在新鍵盤上輸入此配對碼，然後按 Enter："
     );
     assert_eq!(
-        rust_i18n::t!("pairing.paired_receiver_slot", locale = "cs", slot = 2),
-        "Spárováno na pozici 2."
+        rust_i18n::t!("pairing.paired_receiver_slot", locale = "zh-TW", slot = 2),
+        "已配對到插槽 2。"
     );
 }

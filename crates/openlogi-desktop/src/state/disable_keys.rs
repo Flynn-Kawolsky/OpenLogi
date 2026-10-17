@@ -1873,9 +1873,9 @@ mod tests {
         }
     }
 
-    fn assert_russian_locale() {
+    fn assert_traditional_chinese_locale() {
         let locale = rust_i18n::locale().to_string();
-        assert_eq!(locale, "ru");
+        assert_eq!(locale, "zh-TW");
     }
 
     #[gpui::test]
@@ -1886,7 +1886,7 @@ mod tests {
         let _restore = RestoreLocale(rust_i18n::locale().to_string());
         rust_i18n::set_locale("en");
         let mut fixture = SaveRetryFixture::new(&[keyboard_inventory(0xb35b, [1, 2, 3, 4])]);
-        fixture.external.app_settings.language = Some("ru".into());
+        fixture.external.app_settings.language = Some("zh-TW".into());
         fixture.external.save_to_path(&fixture.path()).unwrap();
         let SaveRetryFixture {
             directory: _directory,
@@ -1901,8 +1901,8 @@ mod tests {
             let observed = cx.new(|cx: &mut gpui::Context<Vec<StateEvent>>| {
                 cx.subscribe(&state, |events, source, event: &StateEvent, cx| {
                     if event == &StateEvent::LanguageChanged {
-                        assert_eq!(source.read(cx).language(), Some("ru"));
-                        assert_russian_locale();
+                        assert_eq!(source.read(cx).language(), Some("zh-TW"));
+                        assert_traditional_chinese_locale();
                     }
                     events.push(event.clone());
                 })
@@ -1915,8 +1915,8 @@ mod tests {
         cx.run_until_parked();
         cx.read(|cx| {
             assert!(observed.read(cx).contains(&StateEvent::LanguageChanged));
-            assert_eq!(AppState::try_read(cx).unwrap().language(), Some("ru"));
-            assert_russian_locale();
+            assert_eq!(AppState::try_read(cx).unwrap().language(), Some("zh-TW"));
+            assert_traditional_chinese_locale();
         });
         take_disable_keys_reload(&mut receiver);
         assert!(receiver.try_recv().is_err());
@@ -1928,7 +1928,7 @@ mod tests {
         let _restore = RestoreLocale(rust_i18n::locale().to_string());
         rust_i18n::set_locale("en");
         let mut fixture = SaveRetryFixture::new(&[keyboard_inventory(0xb35b, [1, 2, 3, 4])]);
-        fixture.external.app_settings.language = Some("ru".into());
+        fixture.external.app_settings.language = Some("zh-TW".into());
         fixture.external.save_to_path(&fixture.path()).unwrap();
         let lock = std::fs::OpenOptions::new()
             .read(true)
@@ -1938,8 +1938,8 @@ mod tests {
         lock.try_lock().unwrap();
         let events = fixture.state.retry_disable_keys_save_inner(&fixture.key);
         assert!(events.contains(&StateEvent::LanguageChanged));
-        assert_eq!(fixture.state.language(), Some("ru"));
-        assert_russian_locale();
+        assert_eq!(fixture.state.language(), Some("zh-TW"));
+        assert_traditional_chinese_locale();
         assert!(matches!(
             fixture.state.disable_keys_status(&fixture.key),
             Some(DisableKeysPersistenceStatus::AppliedNotSaved { .. })

@@ -46,11 +46,8 @@ fn switch_name_states_that_on_disables_the_key() {
         switch_label(DisableKey::NumLock),
         key_label(DisableKey::NumLock)
     );
-    rust_i18n::set_locale("ru");
-    assert_eq!(
-        switch_label(DisableKey::Insert).as_ref(),
-        "Отключить Insert"
-    );
+    rust_i18n::set_locale("zh-TW");
+    assert_eq!(switch_label(DisableKey::Insert).as_ref(), "停用 Insert");
 }
 
 fn install_keyboard(cx: &mut TestAppContext) -> tokio::sync::mpsc::UnboundedReceiver<Command> {
@@ -323,16 +320,16 @@ fn unavailable_agent_recovery_uses_the_current_language(cx: &mut TestAppContext)
 
     for (language, expected, selector, previous) in [
         (
-            "ru",
-            "Фоновая служба недоступна.",
-            "disable-keys-error:Фоновая служба недоступна.",
+            "zh-TW",
+            "背景服務無法使用。",
+            "disable-keys-error:背景服務無法使用。",
             "disable-keys-error:The background service is unavailable.",
         ),
         (
             "en",
             "The background service is unavailable.",
             "disable-keys-error:The background service is unavailable.",
-            "disable-keys-error:Фоновая служба недоступна.",
+            "disable-keys-error:背景服務無法使用。",
         ),
     ] {
         visual.update(|_, cx| {
@@ -438,7 +435,7 @@ fn switch_focus_is_stable_but_not_shared_between_devices(cx: &mut TestAppContext
         view.disabled = DisableKeysMask::CAPS_LOCK;
         cx.notify();
     });
-    rust_i18n::set_locale("ru");
+    rust_i18n::set_locale("zh-TW");
     visual.update(|window, cx| window.draw(cx).clear(cx));
     visual.simulate_click(point(px(280.), px(10.)), Modifiers::default());
     let same = visual.update(|window, cx| window.focused(cx).unwrap());
@@ -472,35 +469,20 @@ fn switch_focus_is_stable_but_not_shared_between_devices(cx: &mut TestAppContext
 }
 
 #[test]
-fn all_recovery_errors_have_russian_product_messages() {
+fn all_recovery_errors_have_traditional_chinese_product_messages() {
     let _locale = crate::services::i18n::LOCALE_LOCK.lock().unwrap();
     let _restore = RestoreLocale(rust_i18n::locale().to_string());
-    rust_i18n::set_locale("ru");
+    rust_i18n::set_locale("zh-TW");
     for (error, expected) in [
-        (
-            DisableKeysError::AgentUnavailable,
-            "Фоновая служба недоступна.",
-        ),
+        (DisableKeysError::AgentUnavailable, "背景服務無法使用。"),
         (
             DisableKeysError::ConnectionChanged,
-            "Соединение изменилось. Повторите чтение.",
+            "連線已變更，請重新讀取鍵盤。",
         ),
-        (
-            DisableKeysError::WriteFailed,
-            "Клавиатура не подтвердила изменение.",
-        ),
-        (
-            DisableKeysError::SaveFailed,
-            "Не удалось сохранить подтверждённую настройку.",
-        ),
-        (
-            DisableKeysError::RefreshFailed,
-            "Не удалось перечитать конфигурацию перед сохранением.",
-        ),
-        (
-            DisableKeysError::ReloadFailed,
-            "Фоновая служба не смогла перечитать конфигурацию.",
-        ),
+        (DisableKeysError::WriteFailed, "鍵盤未確認此變更。"),
+        (DisableKeysError::SaveFailed, "無法儲存已確認的設定。"),
+        (DisableKeysError::RefreshFailed, "儲存前無法重新讀取設定。"),
+        (DisableKeysError::ReloadFailed, "背景服務無法重新載入設定。"),
     ] {
         assert_eq!(recovery_error_text(error).as_ref(), expected);
     }
@@ -763,7 +745,7 @@ fn shared_reload_retry_is_inert_offline_and_retries_only_reload(cx: &mut TestApp
 fn shared_read_retry_is_localized_and_restarts_the_failed_read(cx: &mut TestAppContext) {
     let _locale = crate::services::i18n::LOCALE_LOCK.lock().unwrap();
     let _restore = RestoreLocale(rust_i18n::locale().to_string());
-    rust_i18n::set_locale("ru");
+    rust_i18n::set_locale("zh-TW");
     cx.update(gpui_component::init);
     cx.update(theme::register_builtin_themes);
     let mut receiver = install_keyboard(cx);
@@ -787,9 +769,7 @@ fn shared_read_retry_is_localized_and_restarts_the_failed_read(cx: &mut TestAppC
     let (_, visual) = cx.add_window_view(|_, cx| DisableKeysPanel::new(cx));
     visual.update(|window, cx| window.draw(cx).clear(cx));
     let retry = visual
-        .debug_bounds(
-            "disable-keys-read-retry:Не удалось прочитать настройки клавиш. Нажмите для повтора.",
-        )
+        .debug_bounds("disable-keys-read-retry:無法讀取停用按鍵，請按一下重試。")
         .unwrap();
     visual.simulate_click(retry.center(), Modifiers::default());
     visual.run_until_parked();
@@ -805,7 +785,11 @@ fn shared_read_retry_is_localized_and_restarts_the_failed_read(cx: &mut TestAppC
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear(cx));
     assert!(visual.debug_bounds("disable-key-1").is_some());
-    assert!(visual.debug_bounds("disable-keys-read-retry:Не удалось прочитать настройки клавиш. Нажмите для повтора.").is_none());
+    assert!(
+        visual
+            .debug_bounds("disable-keys-read-retry:無法讀取停用按鍵，請按一下重試。")
+            .is_none()
+    );
     assert!(receiver.try_recv().is_err());
 }
 
@@ -813,7 +797,7 @@ fn shared_read_retry_is_localized_and_restarts_the_failed_read(cx: &mut TestAppC
 fn unsupported_read_has_localized_status_without_retry(cx: &mut TestAppContext) {
     let _locale = crate::services::i18n::LOCALE_LOCK.lock().unwrap();
     let _restore = RestoreLocale(rust_i18n::locale().to_string());
-    rust_i18n::set_locale("ru");
+    rust_i18n::set_locale("zh-TW");
     cx.update(gpui_component::init);
     cx.update(theme::register_builtin_themes);
     let mut receiver = install_keyboard(cx);
@@ -837,7 +821,7 @@ fn unsupported_read_has_localized_status_without_retry(cx: &mut TestAppContext) 
     let (_, visual) = cx.add_window_view(|_, cx| DisableKeysPanel::new(cx));
     visual.update(|window, cx| window.draw(cx).clear(cx));
     let status = visual
-        .debug_bounds("disable-keys-unsupported:Это устройство не поддерживает отключение клавиш.")
+        .debug_bounds("disable-keys-unsupported:此裝置不支援停用按鍵。")
         .unwrap();
     assert!(visual.debug_bounds("disable-key-1").is_none());
     visual.simulate_click(status.center(), Modifiers::default());
