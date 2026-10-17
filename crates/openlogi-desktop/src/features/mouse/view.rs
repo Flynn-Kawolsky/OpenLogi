@@ -21,9 +21,10 @@ use super::geometry::{
 };
 use super::hotspots::{Hotspot, MOUSE_MODEL_SIZE, MouseControlId, default_hotspots};
 use super::inspector::{
-    ActionPickerContext, BindingInspectorData, ShortcutMode, binding_inspector,
+    ActionPickerContext, BindingInspectorData, InspectorList, ShortcutMode, binding_inspector,
 };
 use super::leader_lines::{Geometry as LeaderGeometry, Label, paint as paint_leader_lines};
+use super::thumbwheel::ScrollMethodChoice;
 use crate::app::{glow_canvas, keyboard_glow};
 use crate::features::profiles::{friendly_app_name, profile_canvas_status};
 use crate::services::assets::{GlowGeometry, ResolvedAsset};
@@ -69,6 +70,7 @@ struct MouseWorkspaceData<'a> {
     dpi_gestures: bool,
     editing_app: Option<String>,
     overridden: Option<&'a BTreeMap<ButtonId, Action>>,
+    scroll_method: Option<ScrollMethodChoice>,
 }
 
 impl<'a> MouseWorkspaceData<'a> {
@@ -100,6 +102,7 @@ impl<'a> MouseWorkspaceData<'a> {
                     .map_or_else(|| friendly_app_name(app), str::to_string)
             }),
             overridden: state.editing_app_overrides(),
+            scroll_method: state.editing_scroll_method(),
         })
     }
 
@@ -118,6 +121,7 @@ impl<'a> MouseWorkspaceData<'a> {
             dpi_gestures: false,
             editing_app: None,
             overridden: None,
+            scroll_method: None,
         }
     }
 }
@@ -130,7 +134,7 @@ pub struct MouseModelView {
     selected: Option<MouseControlId>,
     /// The gesture direction whose action is open in the fixed inspector.
     gesture_active_dir: Option<GestureDirection>,
-    action_picker_open: bool,
+    open_list: InspectorList,
     action_search: Entity<InputState>,
     pub(super) custom_shortcut_input: Entity<InputState>,
     pub(super) custom_application_input: Entity<InputState>,
@@ -192,7 +196,7 @@ impl MouseModelView {
             hovered: None,
             selected: None,
             gesture_active_dir: None,
-            action_picker_open: false,
+            open_list: InspectorList::Closed,
             action_search,
             custom_shortcut_input,
             custom_application_input,
@@ -224,15 +228,23 @@ impl MouseModelView {
     /// `cx.notify()` to re-render.
     pub(crate) fn set_gesture_selected_dir(&mut self, dir: Option<GestureDirection>) {
         self.gesture_active_dir = dir;
-        self.action_picker_open = false;
+        self.open_list = InspectorList::Closed;
     }
 
     pub(super) fn toggle_action_picker(&mut self) {
-        self.action_picker_open = !self.action_picker_open;
+        self.open_list = self.open_list.toggled(InspectorList::Actions);
     }
 
     pub(super) fn close_action_picker(&mut self) {
-        self.action_picker_open = false;
+        self.open_list = self.open_list.closing(InspectorList::Actions);
+    }
+
+    pub(super) fn toggle_scroll_method_picker(&mut self) {
+        self.open_list = self.open_list.toggled(InspectorList::ScrollMethods);
+    }
+
+    pub(super) fn close_scroll_method_picker(&mut self) {
+        self.open_list = self.open_list.closing(InspectorList::ScrollMethods);
     }
 
     fn reset_for_device(&mut self, device_key: Option<DeviceKey>) {
@@ -243,14 +255,14 @@ impl MouseModelView {
         self.hovered = None;
         self.selected = None;
         self.gesture_active_dir = None;
-        self.action_picker_open = false;
+        self.open_list = InspectorList::Closed;
     }
 
     fn select(&mut self, control: MouseControlId) {
         if self.selected != Some(control) {
             self.selected = Some(control);
             self.gesture_active_dir = None;
-            self.action_picker_open = false;
+            self.open_list = InspectorList::Closed;
         }
     }
 }
@@ -317,6 +329,7 @@ impl Render for MouseModelView {
             dpi_gestures,
             editing_app,
             overridden,
+            scroll_method,
         } = MouseWorkspaceData::read(cx)
             .unwrap_or_else(|| MouseWorkspaceData::empty(&empty_bindings, &empty_gesture_maps));
 
@@ -394,9 +407,10 @@ impl Render for MouseModelView {
                 dpi_gestures,
                 editing_app: editing_app.as_deref(),
                 overridden,
+                scroll_method,
             },
             ActionPickerContext {
-                open: self.action_picker_open,
+                list: self.open_list,
                 search: &self.action_search,
                 shortcut_input: &self.custom_shortcut_input,
                 application_input: &self.custom_application_input,

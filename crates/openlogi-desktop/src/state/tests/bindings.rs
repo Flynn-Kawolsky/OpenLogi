@@ -414,3 +414,306 @@ fn gesture_maps_cover_every_gesture_mode_button() {
         "a promoted OS-hook button gets its own menu simultaneously"
     );
 }
+
+/// Excel as the Windows foreground producer names it: a lower-cased path.
+const EXCEL: &str = r"c:\program files\microsoft office\root\office16\excel.exe";
+
+#[test]
+fn a_scroll_method_is_written_under_the_executable_selector() {
+    use openlogi_core::config::ThumbwheelAppRule;
+    use openlogi_core::scroll::ScrollDelivery;
+
+    let mut config = Config::ephemeral();
+    assert!(set_app_scroll_delivery(
+        &mut config,
+        EXCEL,
+        ScrollDelivery::CtrlShiftWheel
+    ));
+    assert_eq!(
+        config.thumbwheel_apps,
+        BTreeMap::from([(
+            "exe:excel.exe".to_string(),
+            ThumbwheelAppRule {
+                delivery: Some(ScrollDelivery::CtrlShiftWheel),
+            },
+        )]),
+        "the rule survives a versioned install directory"
+    );
+    assert!(
+        !set_app_scroll_delivery(&mut config, EXCEL, ScrollDelivery::CtrlShiftWheel),
+        "re-picking the current method changes nothing"
+    );
+
+    assert!(set_app_scroll_delivery(
+        &mut config,
+        EXCEL,
+        ScrollDelivery::ShiftWheel
+    ));
+    assert_eq!(
+        config.scroll_delivery(Some(EXCEL)),
+        ScrollDelivery::ShiftWheel
+    );
+
+    assert!(set_app_scroll_delivery(
+        &mut config,
+        EXCEL,
+        ScrollDelivery::Native
+    ));
+    assert!(
+        config.thumbwheel_apps.is_empty(),
+        "native removes the rule rather than storing the default"
+    );
+    assert!(
+        !set_app_scroll_delivery(&mut config, EXCEL, ScrollDelivery::Native),
+        "there is nothing left to remove"
+    );
+}
+
+#[test]
+fn a_hand_written_exact_rule_cannot_mask_the_choice() {
+    use openlogi_core::config::ThumbwheelAppRule;
+    use openlogi_core::scroll::ScrollDelivery;
+
+    let exact = |delivery| ThumbwheelAppRule {
+        delivery: Some(delivery),
+    };
+    let mut config = Config::ephemeral();
+    config
+        .thumbwheel_apps
+        .insert(EXCEL.to_string(), exact(ScrollDelivery::AltWheel));
+    config.thumbwheel_apps.insert(
+        r"c:\tools\other.exe".to_string(),
+        exact(ScrollDelivery::AltWheel),
+    );
+
+    assert!(set_app_scroll_delivery(
+        &mut config,
+        EXCEL,
+        ScrollDelivery::VerticalWheel
+    ));
+    assert_eq!(
+        config.scroll_delivery(Some(EXCEL)),
+        ScrollDelivery::VerticalWheel,
+        "the exact key outranks `exe:`, so it must not survive the choice"
+    );
+    assert!(!config.thumbwheel_apps.contains_key(EXCEL));
+
+    config
+        .thumbwheel_apps
+        .insert(EXCEL.to_string(), exact(ScrollDelivery::AltWheel));
+    assert!(set_app_scroll_delivery(
+        &mut config,
+        EXCEL,
+        ScrollDelivery::Native
+    ));
+    assert_eq!(config.scroll_delivery(Some(EXCEL)), ScrollDelivery::Native);
+    assert_eq!(
+        config.thumbwheel_apps.keys().collect::<Vec<_>>(),
+        [r"c:\tools\other.exe"],
+        "another application's rule is left alone"
+    );
+}
+
+#[test]
+fn the_scroll_method_is_offered_only_in_a_per_app_profile_on_windows() {
+    use openlogi_core::scroll::ScrollDelivery;
+
+    use crate::features::mouse::thumbwheel::{
+        SCROLL_METHODS_SUPPORTED, ScrollMethodChoice, ScrollMethodSuggestion,
+    };
+
+    let mut state = state_with_a_known_mouse();
+    assert_eq!(state.editing_scroll_method(), None);
+    let _ = state.commit_scroll_delivery(ScrollDelivery::ShiftWheel);
+    assert!(
+        state.config.thumbwheel_apps.is_empty(),
+        "the global profile names no application to write a rule for"
+    );
+
+    let _ = state.set_editing_app(Some(EXCEL.into()));
+    assert_eq!(
+        state.editing_scroll_method(),
+        SCROLL_METHODS_SUPPORTED.then_some(ScrollMethodChoice {
+            current: ScrollDelivery::Native,
+            suggestion: Some(ScrollMethodSuggestion {
+                delivery: ScrollDelivery::CtrlShiftWheel,
+                needs_verification: true,
+            }),
+        }),
+        "a suggestion is offered, never applied"
+    );
+    assert!(state.config.thumbwheel_apps.is_empty());
+
+    let events = state.commit_scroll_delivery(ScrollDelivery::CtrlShiftWheel);
+    assert_eq!(
+        events,
+        [StateEvent::BindingsChanged(DeviceKey::from(
+            KNOWN_MOUSE_KEY
+        ))]
+    );
+    assert_eq!(
+        state.editing_scroll_method().map(|choice| choice.current),
+        SCROLL_METHODS_SUPPORTED.then_some(ScrollDelivery::CtrlShiftWheel)
+    );
+    assert!(
+        state
+            .config
+            .per_app_overrides(KNOWN_MOUSE_KEY, EXCEL)
+            .is_none(),
+        "the method is an application rule, not a button override"
+    );
+}
+
+#[test]
+fn a_scroll_method_is_saved_and_reloaded_and_native_deletes_it() {
+    use openlogi_core::config::ConfigFile;
+    use openlogi_core::scroll::ScrollDelivery;
+
+    use crate::services::ipc::Command;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(openlogi_core::paths::CONFIG_FILE);
+    let (config, file) = ConfigFile::load_from_path(&path).unwrap();
+    let resolver = AssetResolver::new();
+    let (commands, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = AppState::new(Sources {
+        inventories: &[direct_inventory([0xa3, 0x93, 0xca, 0xe0])],
+        persistence: ConfigPersistence::UserFile(file),
+        ..Sources::in_memory(config, &resolver, commands)
+    });
+    // Discard only the initial load.
+    receiver.try_recv().unwrap();
+    let _ = state.set_editing_app(Some(EXCEL.into()));
+
+    let _ = state.commit_scroll_delivery(ScrollDelivery::CtrlShiftWheel);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains("[thumbwheel_apps.\"exe:excel.exe\"]")
+            && text.contains("delivery = \"ctrl_shift_wheel\""),
+        "{text}"
+    );
+    assert_eq!(
+        Config::load_from_path(&path)
+            .unwrap()
+            .scroll_delivery(Some(EXCEL)),
+        ScrollDelivery::CtrlShiftWheel
+    );
+    assert!(matches!(receiver.try_recv(), Ok(Command::ReloadConfig(_))));
+
+    let _ = state.commit_scroll_delivery(ScrollDelivery::CtrlShiftWheel);
+    assert!(
+        receiver.try_recv().is_err(),
+        "an unchanged method is neither saved nor reloaded"
+    );
+
+    let _ = state.commit_scroll_delivery(ScrollDelivery::Native);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("thumbwheel_apps"), "{text}");
+    assert!(matches!(receiver.try_recv(), Ok(Command::ReloadConfig(_))));
+    assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn a_failed_save_leaves_no_scroll_method_behind() {
+    use openlogi_core::scroll::ScrollDelivery;
+
+    let resolver = AssetResolver::new();
+    let (commands, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = AppState::new(Sources {
+        inventories: &[direct_inventory([0xa3, 0x93, 0xca, 0xe0])],
+        persistence: ConfigPersistence::ReadOnly("read-only".into()),
+        ..Sources::in_memory(Config::ephemeral(), &resolver, commands)
+    });
+    while receiver.try_recv().is_ok() {}
+    let _ = state.set_editing_app(Some(EXCEL.into()));
+
+    let _ = state.commit_scroll_delivery(ScrollDelivery::ShiftWheel);
+
+    assert_eq!(
+        state.config.scroll_delivery(Some(EXCEL)),
+        ScrollDelivery::Native
+    );
+    assert_eq!(state.config_issue(), Some("read-only"));
+    assert!(
+        receiver.try_recv().is_err(),
+        "failed saves must not reload the agent"
+    );
+}
+
+#[test]
+fn a_scroll_method_alone_keeps_the_app_listed_as_a_profile() {
+    use openlogi_core::scroll::ScrollDelivery;
+
+    use crate::features::mouse::thumbwheel::SCROLL_METHODS_SUPPORTED;
+
+    let listed = |state: &AppState| {
+        state
+            .app_profiles()
+            .map(|(app, count)| (app.to_string(), count))
+            .collect::<Vec<_>>()
+    };
+    let rule_only = |app: &str| {
+        if SCROLL_METHODS_SUPPORTED {
+            vec![(app.to_string(), 0)]
+        } else {
+            Vec::new()
+        }
+    };
+    let mut state = state_with_a_known_mouse();
+    let _ = state.set_editing_app(Some(EXCEL.into()));
+    let _ = state.commit_scroll_delivery(ScrollDelivery::CtrlShiftWheel);
+    assert_eq!(
+        listed(&state),
+        rule_only(EXCEL),
+        "the open profile is saved, and listed once"
+    );
+
+    let _ = state.set_editing_app(None);
+    assert_eq!(
+        listed(&state),
+        rule_only("exe:excel.exe"),
+        "the profile outlives its editor"
+    );
+
+    let _ = state.set_editing_app(Some(EXCEL.into()));
+    let _ = state.commit_binding(ButtonId::Back, Action::Undo);
+    let _ = state.set_editing_app(None);
+    assert_eq!(
+        listed(&state),
+        [(EXCEL.to_string(), 1)],
+        "a button profile the rule applies to already lists the app"
+    );
+}
+
+#[test]
+fn resetting_or_removing_an_app_profile_also_clears_its_scroll_method() {
+    use openlogi_core::scroll::ScrollDelivery;
+
+    let key = DeviceKey::from(KNOWN_MOUSE_KEY);
+    for command in [
+        AppState::reset_app_profile,
+        AppState::remove_app_profile,
+        AppState::remove_all_app_profiles,
+    ] {
+        for buttons in [false, true] {
+            let mut state = state_with_a_known_mouse();
+            let _ = state.set_editing_app(Some(EXCEL.into()));
+            let _ = state.commit_scroll_delivery(ScrollDelivery::ShiftWheel);
+            if buttons {
+                let _ = state.commit_binding(ButtonId::Back, Action::Undo);
+            }
+            let _ = state.set_editing_app(None);
+            assert!(state.app_has_scroll_method(EXCEL));
+
+            // The identifier the profile list offers it under.
+            let app = if buttons { EXCEL } else { "exe:excel.exe" };
+            let _ = command(&mut state, &key, app);
+            assert!(
+                state.config.thumbwheel_apps.is_empty(),
+                "buttons {buttons}: the rule outlived its profile"
+            );
+            assert!(!state.app_has_scroll_method(EXCEL));
+            assert!(state.app_profiles().next().is_none(), "buttons {buttons}");
+        }
+    }
+}
