@@ -17,6 +17,7 @@ mod links;
 mod migrations;
 mod per_app;
 mod schema;
+mod thumbwheel;
 
 fn write_and_read(config: &Config) -> Config {
     let dir = tempfile::tempdir().expect("tempdir");

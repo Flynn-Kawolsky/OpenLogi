@@ -3,9 +3,11 @@
 //! Hook callbacks submit typed wheel impulses through [`ScrollInputHandle`]
 //! without blocking. The worker either scales and emits them directly,
 //! evaluates finite smooth motion from absolute timestamps, or, with smoothing
-//! off, wraps a diverted horizontal wheel in a phased gesture. Pixel-precise
-//! input never enters this runtime, so native trackpad and continuous wheel
-//! streams cannot be mixed with wheel ticks.
+//! off, wraps a diverted horizontal wheel in a phased gesture. A horizontal
+//! tick bound for an application's delivery lane bypasses all of that and
+//! leaves as whole notches. Pixel-precise input never enters this runtime, so
+//! native trackpad and continuous wheel streams cannot be mixed with wheel
+//! ticks.
 
 mod worker;
 
@@ -16,7 +18,7 @@ use std::collections::hash_map::Entry;
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
-use openlogi_core::scroll::ScrollDelta;
+use openlogi_core::scroll::{ScrollDelivery, ScrollDelta};
 use openlogi_inject::SmoothScrollPhase;
 
 use crate::runtime::HidppSessionId;
@@ -31,6 +33,15 @@ const FRAME_PERIOD: Duration = Duration::from_millis(8);
 /// above the gap between ratchet ticks of a continuous spin and far below the
 /// pause between separate spins.
 const PHASED_IDLE: Duration = Duration::from_millis(120);
+/// Quiet time after which a partial delivery-lane notch is forgotten, so slow
+/// intermittent nudges never add up to one; the discrete thumb-wheel action
+/// decay uses the same window.
+const NOTCH_IDLE: Duration = Duration::from_millis(300);
+/// Most notches one input may inject, the bound on discrete thumb-wheel
+/// repeats per captured event.
+const MAX_NOTCHES_PER_INPUT: f64 = 20.0;
+/// Rounding slack, so six sixth-of-a-notch increments make exactly one notch.
+const NOTCH_EPSILON: f64 = 1.0e-9;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct WheelDelta {
@@ -435,6 +446,50 @@ impl ScrollEngine {
                 self.output.progress(delta, false, emit);
             }
         }
+    }
+}
+
+/// Whole-notch output for delivery lanes, apart from the platform quantizer's
+/// residual. Every notch a lane injects is a whole modifier-and-wheel batch,
+/// which applications act on once per notch, so fractional distance
+/// accumulates here and leaves only as whole notches.
+#[derive(Default)]
+struct NotchAccumulator {
+    lane: ScrollDelivery,
+    residual: f64,
+    last_input: Option<Instant>,
+}
+
+impl NotchAccumulator {
+    /// Add `ticks` of horizontal distance through `lane` and return the whole
+    /// notches now due, signed like `ticks`. A different lane, a reversal, or
+    /// [`NOTCH_IDLE`] without input first discards the partial notch; distance
+    /// beyond [`MAX_NOTCHES_PER_INPUT`] is dropped.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the whole notch count is clamped to ±MAX_NOTCHES_PER_INPUT first"
+    )]
+    fn push(&mut self, lane: ScrollDelivery, ticks: f64, at: Instant) -> i32 {
+        let idle = self
+            .last_input
+            .is_none_or(|last| at.saturating_duration_since(last) > NOTCH_IDLE);
+        if idle || lane != self.lane || self.residual * ticks < 0.0 {
+            self.residual = 0.0;
+        }
+        self.lane = lane;
+        self.last_input = Some(at);
+        self.residual += ticks;
+        let whole = (self.residual + NOTCH_EPSILON.copysign(self.residual)).trunc();
+        self.residual -= whole;
+        if self.residual.abs() < NOTCH_EPSILON {
+            self.residual = 0.0;
+        }
+        whole.clamp(-MAX_NOTCHES_PER_INPUT, MAX_NOTCHES_PER_INPUT) as i32
+    }
+
+    /// Discard any partial notch.
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 

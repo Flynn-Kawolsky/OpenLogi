@@ -61,16 +61,22 @@ impl ForegroundApp {
 /// that merely ends in `.exe` is not reinterpreted as one.
 #[must_use]
 pub fn overlay_for<'a, T>(overlays: &'a BTreeMap<String, T>, app: &str) -> Option<&'a T> {
-    overlays.get(app).or_else(|| {
-        let (_, executable_name) = app.rsplit_once(['\\', '/'])?;
-        if !Path::new(executable_name)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
-        {
-            return None;
-        }
-        overlays.get(&format!("exe:{}", executable_name.to_ascii_lowercase()))
-    })
+    overlays
+        .get(app)
+        .or_else(|| overlays.get(&executable_selector(app)?))
+}
+
+/// The `exe:<filename>` key [`overlay_for`] falls back to for `app`, or `None`
+/// when the identifier names no executable. An editor that stores a per-app
+/// entry under the stable selector writes this key, so it is the one the
+/// matcher derives.
+#[must_use]
+pub fn executable_selector(app: &str) -> Option<String> {
+    let (_, executable_name) = app.rsplit_once(['\\', '/'])?;
+    Path::new(executable_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        .then(|| format!("exe:{}", executable_name.to_ascii_lowercase()))
 }
 
 #[cfg(test)]
@@ -130,6 +136,29 @@ mod tests {
             "",
         ] {
             assert_eq!(overlay_for(&map, app), None, "{app}");
+        }
+    }
+
+    #[test]
+    fn the_executable_selector_is_the_key_the_fallback_matches() {
+        for path in [
+            r"C:\Program Files\ShareX\ShareX.EXE",
+            "/c/program files/sharex/sharex.exe",
+        ] {
+            assert_eq!(
+                executable_selector(path).as_deref(),
+                Some("exe:sharex.exe"),
+                "{path}"
+            );
+        }
+        // An `exe:` key is already a selector, not a path to derive one from.
+        for app in [
+            "exe:sharex.exe",
+            "com.example.exe",
+            r"c:\tools\code.exe.bak",
+            "",
+        ] {
+            assert_eq!(executable_selector(app), None, "{app}");
         }
     }
 }

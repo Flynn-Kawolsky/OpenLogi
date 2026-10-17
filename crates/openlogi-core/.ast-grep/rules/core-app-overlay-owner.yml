@@ -2,12 +2,13 @@
 # against the foreground identifier: exact key first, then the Windows
 # `exe:<filename>` fallback. Every per-app map (button overrides, Actions Ring
 # layouts) resolves through it, so one selector means one thing everywhere.
-# An editor's exact-key lookup (`per_app_overrides`) is a different question
-# and is not matched here.
+# An editor that writes the stable selector takes it from
+# `executable_selector`, the fallback's own key. An editor's exact-key lookup
+# (`per_app_overrides`) is a different question and is not matched here.
 id: core-app-overlay-owner
 language: rust
 severity: error
-message: Matching a per-app key against the foreground identifier is openlogi_core::app::overlay_for's; call it instead of building an `exe:` key or indexing the ring's per_app map by the raw identifier here.
+message: Matching a per-app key against the foreground identifier is openlogi_core::app::overlay_for's; call it (or executable_selector, for the key it falls back to) instead of building an `exe:` key or indexing the ring's per_app map by the raw identifier here.
 note: |
   action_ring.per_app looked the identifier up verbatim while
   per_app_bindings fell back to `exe:<filename>` (#643), so a Windows Store

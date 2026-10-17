@@ -98,7 +98,8 @@ Common device fields are:
   control under both spellings in the same table is an error, not a merge
 - `per_app_bindings`: sparse action overlays keyed by macOS bundle id (or the
   exact executable path for applications without a bundle id), Linux application
-  id, exact lower-cased Windows executable path, or `exe:<filename>.exe`. macOS
+  id, exact lower-cased Windows executable path, or `exe:<filename>.exe`, also
+  lower-cased (`exe:excel.exe`; a key with capitals never matches). macOS
   paths retain their original spelling and case. The Buttons panel edits these
   under its Profile selector. After bringing an application to the foreground,
   choose it from Recent applications to use the identifier the agent observed.
@@ -121,6 +122,28 @@ Common device fields are:
 `[keyboard.bindings]` contains global key triggers such as `f1` or
 `shift+command+f5`. Supported trigger modifiers are `shift`, `control`,
 `option`, and `command`; aliases such as `ctrl`, `alt`, and `cmd` are accepted.
+
+`[thumbwheel_apps."<selector>"]` changes how horizontal scrolling reaches one
+application, for applications that ignore the horizontal wheel. Selectors are
+those of `per_app_bindings`; prefer `exe:<filename>.exe`, which survives
+versioned install directories, and write it in lower case (`exe:excel.exe`,
+although Task Manager shows `EXCEL.EXE`): a key with capitals loads without
+error but never matches. `delivery` is `native` (the default), `shift_wheel`,
+`ctrl_shift_wheel`, `alt_wheel`, `vertical_wheel`, or `ctrl_wheel`. Every value
+except `native` sends each whole horizontal notch as a vertical wheel notch
+under those modifiers, scrolling right as wheel-down (so `ctrl_wheel` zooms in
+on scrolling left), and taps an unassigned key before releasing an injected
+modifier, so the release does not read as a lone Shift, Ctrl or Alt press.
+Partial notches are dropped after 300 ms without input. Rules apply on Windows
+only, to every horizontal wheel over the application, and follow
+`mouse_profile_target`. A notch is sent as an ordinary horizontal wheel when,
+with `pointer`, the pointer has left the window the rule was chosen for, or,
+with `focused` or a window under the pointer that cannot be identified, the
+pointer is not over the focused application. In the Buttons panel, the
+thumb-wheel inspector of an app profile edits the same rule, and resetting or
+removing that profile clears it. Windows drops synthetic input to applications
+running as administrator, so a listed application running elevated receives
+no horizontal scrolling at all.
 
 ## Actions
 

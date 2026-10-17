@@ -122,3 +122,8 @@ dpi = 800
 [keyboard.bindings]
 f1 = "MissionControl"
 "shift+command+f5" = "ShowDesktop"
+
+# Windows only: horizontal scrolling for an application that ignores the
+# horizontal wheel, sent as Shift plus the vertical wheel.
+[thumbwheel_apps."exe:example.exe"]
+delivery = "shift_wheel"
