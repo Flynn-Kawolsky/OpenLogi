@@ -48,7 +48,18 @@ use tracing::{info, warn};
 
 fn main() {
     logging::init();
+    let outcome = std::panic::catch_unwind(run);
+    // Returning from `main` runs no static destructors, so the log lines still
+    // queued for the file would be lost with the process — and so would those
+    // leading up to a panic unwinding out of `run`, which the hook has already
+    // reported.
+    logging::flush();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
 
+fn run() {
     // Single-instance guard: the agent owns all device I/O, the CGEventTap, and
     // the IPC socket, so a second agent must never start — launchd's KeepAlive
     // racing the GUI's one-shot auto-spawn could otherwise bring up two, and the
@@ -95,7 +106,12 @@ fn main() {
     // reaches the running agent through `reload_config`.
     openlogi_core::locale::activate(config.app_settings.language.as_deref());
 
+    // Device reads, OS hooks, the button and scroll workers and background
+    // HID++ writes all own dedicated threads, so this runtime only multiplexes
+    // IPC, watchers and the lifecycle. Two workers keep one free while the
+    // other runs a handler, instead of one idle thread per logical CPU.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
     {

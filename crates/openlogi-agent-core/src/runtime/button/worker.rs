@@ -6,8 +6,7 @@ use std::time::Instant;
 
 use super::{
     ActivePress, ButtonCommand, ButtonInput, ButtonRuntimeEvent, ButtonState, CancelReason,
-    EVENT_QUEUE_CAPACITY, EndReason, PressBehavior, PressToken, SHUTDOWN_POLL_PERIOD,
-    ShutdownRequest,
+    EVENT_QUEUE_CAPACITY, EndReason, PressBehavior, PressToken, ShutdownRequest,
 };
 
 pub(super) fn run_worker(
@@ -22,7 +21,10 @@ pub(super) fn run_worker(
         if finish_shutdown_if_requested(shutdown, &mut state, emit) {
             return;
         }
-        let command = match events.recv_timeout(SHUTDOWN_POLL_PERIOD) {
+        // Idle, the worker sleeps until a command arrives; only a pending
+        // long press bounds the wait. Shutdown and invalidation post a
+        // `Wake`, so neither needs a poll.
+        let command = match receive_command(events, state.next_deadline()) {
             Ok(command) => command,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if settle_due_long_presses(
@@ -71,6 +73,20 @@ pub(super) fn run_worker(
             return;
         }
     }
+}
+
+fn receive_command(
+    events: &mpsc::Receiver<ButtonCommand>,
+    deadline: Option<Instant>,
+) -> Result<ButtonCommand, mpsc::RecvTimeoutError> {
+    deadline.map_or_else(
+        || {
+            events
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        },
+        |deadline| events.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+    )
 }
 
 fn process_command(

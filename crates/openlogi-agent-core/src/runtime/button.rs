@@ -23,8 +23,6 @@ use super::ActionDispatchTarget;
 const EVENT_QUEUE_CAPACITY: usize = 128;
 /// Bounds how long graceful process exit waits for terminal handlers.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
-/// Lets the worker observe the out-of-band shutdown channel even while idle.
-const SHUTDOWN_POLL_PERIOD: Duration = Duration::from_millis(10);
 
 /// Process-unique identity of one HID++ hardware capture incarnation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -394,6 +392,15 @@ impl ButtonState {
             .collect()
     }
 
+    /// The earliest pending long-press threshold: the only moment the worker
+    /// must wake without a command.
+    fn next_deadline(&self) -> Option<Instant> {
+        self.active
+            .values()
+            .filter_map(|press| press.behavior.deadline())
+            .min()
+    }
+
     fn has_due_long_press(&self, now: Instant) -> bool {
         self.active
             .values()
@@ -562,6 +569,12 @@ impl ButtonInputHandle {
 
     pub(crate) fn invalidate_all(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
+        self.wake();
+    }
+
+    /// Unblock an idle worker so it observes state that changed outside its
+    /// queue. A full queue needs no wake: the worker is not idle.
+    fn wake(&self) {
         let _ = self.events.try_send(ButtonCommand::Wake);
     }
 
@@ -689,6 +702,9 @@ impl ButtonRuntimeOwner {
             let _ = worker.join();
             return false;
         }
+        // Send the wake only after the shutdown request is visible. Otherwise
+        // an idle worker could consume it first and block again on `events`.
+        self.input.wake();
         if wait.recv_timeout(timeout).is_err() {
             warn!("button lifecycle worker did not shut down before the deadline");
             // Dropping a JoinHandle detaches the worker; the queued request
