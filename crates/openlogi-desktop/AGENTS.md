@@ -68,11 +68,10 @@ Panel selection and settings writes follow `.agents/rules/gui.md`.
 
 ## Build inputs that are not source
 
-- `build.rs` asks `cargo metadata` where gpui-component's source actually sits
-  and copies its `themes/` into `OUT_DIR`, because the compiled crate does not
-  ship them. **Do not vendor copies of those themes into this repo.**
-  `OPENLOGI_THEMES_DIR` overrides the lookup.
-- `themes/openlogi.json` is the app's own theme, layered on that upstream set.
+- `themes/openlogi.json` is the app's own theme and the only theme file the
+  build embeds; the Appearance picker offers it beside gpui-component's built-in
+  default light/dark pair. **Do not vendor the upstream gpui-component themes
+  into this repo.**
 - `bundle/` holds `OpenLogi.entitlements` and one `Info.plist` per bundled
   binary (`desktop-dev`, `agent-release`, `overlay-release`). `cargo xtask`
   packaging reads them; they are the app's macOS identity, not decoration —

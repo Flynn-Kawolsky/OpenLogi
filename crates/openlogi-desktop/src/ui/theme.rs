@@ -235,29 +235,23 @@ pub fn palette(cx: &App) -> Palette {
 }
 
 /// Our brand theme (light + dark), encoding the original tuned surfaces. Kept as
-/// a readable, committed JSON. The upstream gpui-component themes are *not*
-/// vendored into this repo — `build.rs` copies them from the pinned dependency
-/// checkout into `OUT_DIR` and generates the `UPSTREAM_THEME_JSON` list included
-/// just below (gpui-component doesn't ship them inside its compiled crate, so
-/// they must be embedded to be selectable).
+/// a readable, committed JSON. It is the only theme file this build embeds: the
+/// Appearance picker offers it beside gpui-component's built-in default
+/// light/dark pair (seeded by `gpui_component::init`), and none of the upstream
+/// gpui-component theme collection.
 const OPENLOGI_THEME_JSON: &str = include_str!("../../themes/openlogi.json");
 
-// Defines `static UPSTREAM_THEME_JSON: &[&str]` from build-time-embedded copies.
-include!(concat!(env!("OUT_DIR"), "/builtin_themes.rs"));
-
-/// The default brand theme names — slots [`apply_from_settings`] falls back to.
+/// The default brand theme names — slots [`apply_from_settings`] falls back to,
+/// including for a stored theme this build no longer bundles.
 pub const OPENLOGI_LIGHT: &str = "OpenLogi Light";
 pub const OPENLOGI_DARK: &str = "OpenLogi Dark";
 
-/// Register every bundled theme into the [`ThemeRegistry`]. Call once at
-/// startup, after `gpui_component::init` (which seeds the registry global). Our
-/// brand theme loads first; the upstream themes follow.
+/// Register the bundled brand theme into the [`ThemeRegistry`]. Call once at
+/// startup, after `gpui_component::init` (which seeds the registry global with
+/// the framework's default light/dark pair).
 pub fn register_builtin_themes(cx: &mut App) {
-    let registry = ThemeRegistry::global_mut(cx);
-    for json in std::iter::once(OPENLOGI_THEME_JSON).chain(UPSTREAM_THEME_JSON.iter().copied()) {
-        if let Err(error) = registry.load_themes_from_str(json) {
-            tracing::warn!(%error, "failed to load a bundled theme");
-        }
+    if let Err(error) = ThemeRegistry::global_mut(cx).load_themes_from_str(OPENLOGI_THEME_JSON) {
+        tracing::warn!(%error, "failed to load a bundled theme");
     }
 }
 
@@ -465,19 +459,53 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn bundled_theme_picker_keeps_upstream_and_openlogi_themes(cx: &mut gpui::TestAppContext) {
+    fn bundled_theme_picker_offers_openlogi_and_the_default_pair(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             gpui_component::init(cx);
             register_builtin_themes(cx);
-            let themes = ThemeRegistry::global(cx).themes();
-            for name in [
-                OPENLOGI_LIGHT,
-                OPENLOGI_DARK,
-                "Catppuccin Latte",
-                "Catppuccin Mocha",
-            ] {
-                assert!(themes.contains_key(name), "missing bundled theme: {name}");
-            }
+            let registry = ThemeRegistry::global(cx);
+            let defaults = [
+                registry.default_light_theme().name.clone(),
+                registry.default_dark_theme().name.clone(),
+            ];
+            let mut offered: Vec<_> = registry.themes().keys().cloned().collect();
+            offered.sort();
+            let mut expected: Vec<_> = [OPENLOGI_LIGHT.into(), OPENLOGI_DARK.into()]
+                .into_iter()
+                .chain(defaults)
+                .collect();
+            expected.sort();
+            assert_eq!(offered, expected);
+        });
+    }
+
+    /// A theme name stored by an earlier build that bundled the upstream
+    /// collection must land on the brand theme, not leave the slot unset.
+    #[gpui::test]
+    fn a_stored_theme_this_build_no_longer_bundles_falls_back_to_openlogi(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext as _;
+
+        use crate::services::assets::AssetResolver;
+        use crate::state::Sources;
+
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            register_builtin_themes(cx);
+            let resolver = AssetResolver::new();
+            let (commands, _receiver) = tokio::sync::mpsc::unbounded_channel();
+            let state = AppState::new(Sources::in_memory(
+                openlogi_core::config::Config::ephemeral(),
+                &resolver,
+                commands,
+            ));
+            AppState::set_global(cx.new(|_| state), cx);
+            AppState::apply(cx, |state| {
+                state.commit_theme(ThemeMode::Dark, Some("Catppuccin Mocha".into()))
+            });
+            apply_from_settings(None, cx);
+            assert_eq!(Theme::global(cx).dark_theme.name.to_string(), OPENLOGI_DARK);
         });
     }
 

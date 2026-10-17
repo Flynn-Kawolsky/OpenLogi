@@ -175,8 +175,8 @@ mod tests {
 
         for (locale, scale, height, enabled) in [
             ("en", UiScale::Normal, 320., false),
-            ("de", UiScale::ExtraLarge, 320., true),
-            ("de", UiScale::ExtraLarge, 220., false),
+            ("en", UiScale::ExtraLarge, 320., true),
+            ("en", UiScale::ExtraLarge, 220., false),
         ] {
             rust_i18n::set_locale(locale);
             let handle = cx.update(|cx| {

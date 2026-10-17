@@ -414,7 +414,7 @@ mod tests {
     #[gpui::test]
     fn every_channel_gets_a_row_and_paired_ones_keep_their_rename_inside(cx: &mut TestAppContext) {
         let _locale = LOCALE_LOCK.lock().unwrap();
-        rust_i18n::set_locale("fi");
+        rust_i18n::set_locale("en");
         let cx = draw(cx, hosts(true), None);
 
         for row in ROWS {

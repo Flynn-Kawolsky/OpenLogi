@@ -95,8 +95,8 @@ axwatch = "0.1"
 # the desktop, overlay, and their integrations share the same GPUI types.
 gpui = { package = "gpui-pre", version = "=0.3.4" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.4", features = ["font-kit", "x11", "wayland"] }
-# Keep the Kit crates on one release checkout: build.rs embeds the upstream
-# themes, which are not included in the published component/assets packages.
+# Keep the Kit crates on one release checkout, which the footer backport below
+# patches as a set.
 gpui-component = { git = "https://github.com/longbridge/gpui-kit", tag = "v0.6.1" }
 # The unstyled interaction primitives behind gpui-component. Desktop uses its
 # semantic Button for custom-painted controls that must retain native keyboard
@@ -163,3 +163,114 @@ debug = false
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Size-optimize the dependencies only the GPUI processes (settings app and
+# Actions Ring overlay) link: GPUI and gpui-component, plus their SVG, image,
+# font-shaping, accessibility, markdown/HTML, and layout stacks. Measured on a
+# Windows x64 build with this profile's fat LTO: openlogi-desktop.exe 36.58 MB
+# -> 32.01 MB (-12.5%), openlogi-overlay.exe ~10.5 MB -> 9.0 MB. Nothing here
+# is in the resident agent's graph (tokio, hidpp, and the openlogi-* crates
+# stay at opt-level 3), so device I/O latency is untouched; `png` is also in
+# the CLI's graph, which this build does not ship.
+[profile.release.package."gpui-pre"]
+opt-level = "s"
+[profile.release.package."gpui-pre-platform"]
+opt-level = "s"
+[profile.release.package."gpui-pre-windows"]
+opt-level = "s"
+[profile.release.package."gpui-pre-macos"]
+opt-level = "s"
+[profile.release.package."gpui-pre-linux"]
+opt-level = "s"
+[profile.release.package."gpui-pre-wgpu"]
+opt-level = "s"
+[profile.release.package."gpui-pre-util"]
+opt-level = "s"
+[profile.release.package."gpui-pre-collections"]
+opt-level = "s"
+[profile.release.package."gpui-pre-sum-tree"]
+opt-level = "s"
+[profile.release.package."gpui-pre-scheduler"]
+opt-level = "s"
+[profile.release.package."gpui-pre-http-client"]
+opt-level = "s"
+[profile.release.package."gpui-pre-shared-string"]
+opt-level = "s"
+[profile.release.package."gpui-pre-refineable"]
+opt-level = "s"
+[profile.release.package."gpui-pre-zlog"]
+opt-level = "s"
+[profile.release.package."gpui-pre-ztracing"]
+opt-level = "s"
+[profile.release.package."gpui-pre-perf"]
+opt-level = "s"
+[profile.release.package."gpui-pre-media"]
+opt-level = "s"
+[profile.release.package."gpui-component"]
+opt-level = "s"
+[profile.release.package."gpui-base"]
+opt-level = "s"
+[profile.release.package."swr-gpui-pre"]
+opt-level = "s"
+[profile.release.package."resvg"]
+opt-level = "s"
+[profile.release.package."usvg"]
+opt-level = "s"
+[profile.release.package."tiny-skia"]
+opt-level = "s"
+[profile.release.package."tiny-skia-path"]
+opt-level = "s"
+[profile.release.package."image"]
+opt-level = "s"
+[profile.release.package."png"]
+opt-level = "s"
+[profile.release.package."tiff"]
+opt-level = "s"
+[profile.release.package."exr"]
+opt-level = "s"
+[profile.release.package."gif"]
+opt-level = "s"
+[profile.release.package."image-webp"]
+opt-level = "s"
+[profile.release.package."zune-jpeg"]
+opt-level = "s"
+[profile.release.package."zune-inflate"]
+opt-level = "s"
+[profile.release.package."rustybuzz"]
+opt-level = "s"
+[profile.release.package."ttf-parser"]
+opt-level = "s"
+[profile.release.package."fontdb"]
+opt-level = "s"
+[profile.release.package."accesskit"]
+opt-level = "s"
+[profile.release.package."accesskit_consumer"]
+opt-level = "s"
+[profile.release.package."accesskit_windows"]
+opt-level = "s"
+[profile.release.package."html5ever"]
+opt-level = "s"
+[profile.release.package."markup5ever"]
+opt-level = "s"
+[profile.release.package."markup5ever_rcdom"]
+opt-level = "s"
+[profile.release.package."xml5ever"]
+opt-level = "s"
+[profile.release.package."markdown"]
+opt-level = "s"
+[profile.release.package."lsp-types"]
+opt-level = "s"
+[profile.release.package."schemars"]
+opt-level = "s"
+[profile.release.package."lyon_tessellation"]
+opt-level = "s"
+[profile.release.package."lyon_path"]
+opt-level = "s"
+[profile.release.package."lyon_geom"]
+opt-level = "s"
+[profile.release.package."lyon_algorithms"]
+opt-level = "s"
+[profile.release.package."taffy"]
+opt-level = "s"
+[profile.release.package."ropey"]
+opt-level = "s"

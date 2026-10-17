@@ -1022,11 +1022,12 @@ mod tests {
 
     #[gpui::test]
     fn a_long_device_enabled_caption_keeps_the_switch_in_the_row(cx: &mut TestAppContext) {
-        // French carries the longest `native_controls_when_disabled` caption.
+        // English carries the longer `native_controls_when_disabled` caption of
+        // the bundled catalogs.
         // Without a shrinkable caption column the switch is pushed past the
         // row's right edge, out of the Configuration card.
         let _locale = LOCALE_LOCK.lock().unwrap();
-        rust_i18n::set_locale("fr");
+        rust_i18n::set_locale("en");
         cx.update(gpui_component::init);
         let (_view, cx) = cx.add_window_view(|_, _| DeviceEnabledRowHost);
         cx.simulate_resize(size(px(800.), px(600.)));

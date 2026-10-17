@@ -30,31 +30,7 @@ fn locale_files_have_the_same_keys() {
         "en.toml is the string source of truth and must define keys"
     );
 
-    let catalogs = [
-        ("be", include_str!("../locales/be.toml")),
-        ("cs", include_str!("../locales/cs.toml")),
-        ("ja", include_str!("../locales/ja.toml")),
-        ("ru", include_str!("../locales/ru.toml")),
-        ("uk", include_str!("../locales/uk.toml")),
-        ("zh-CN", include_str!("../locales/zh-CN.toml")),
-        ("zh-HK", include_str!("../locales/zh-HK.toml")),
-        ("zh-TW", include_str!("../locales/zh-TW.toml")),
-        ("it", include_str!("../locales/it.toml")),
-        ("da", include_str!("../locales/da.toml")),
-        ("de", include_str!("../locales/de.toml")),
-        ("el", include_str!("../locales/el.toml")),
-        ("es", include_str!("../locales/es.toml")),
-        ("fi", include_str!("../locales/fi.toml")),
-        ("fr", include_str!("../locales/fr.toml")),
-        ("ko", include_str!("../locales/ko.toml")),
-        ("nb", include_str!("../locales/nb.toml")),
-        ("nl", include_str!("../locales/nl.toml")),
-        ("pl", include_str!("../locales/pl.toml")),
-        ("pt-BR", include_str!("../locales/pt-BR.toml")),
-        ("pt-PT", include_str!("../locales/pt-PT.toml")),
-        ("sv", include_str!("../locales/sv.toml")),
-        ("tr", include_str!("../locales/tr.toml")),
-    ];
+    let catalogs = [("zh-TW", include_str!("../locales/zh-TW.toml"))];
 
     // `include_str!` needs literal paths, so this list is written out by
     // hand, which means it can silently fall behind [`SUPPORTED`]. A locale
