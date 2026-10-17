@@ -85,3 +85,5 @@ node_modules/
 /.flatpak-builder/
 /build/
 /repo/
+# The MSI `packaging/windows/build-msi.ps1` writes.
+/dist/
