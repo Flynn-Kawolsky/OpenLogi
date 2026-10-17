@@ -188,7 +188,8 @@ fn class_name(window: HWND) -> Option<String> {
     Some(String::from_utf16_lossy(&class[..len]))
 }
 
-pub(crate) fn pointer_context() -> Option<PointerContext> {
+/// The root window under the cursor.
+fn root_window_under_pointer() -> Option<HWND> {
     let mut point = POINT::default();
     // SAFETY: point is a live writable out-pointer. Use the same unscaled
     // Win32 coordinates for WindowFromPoint, not GPUI's logical cursor position.
@@ -202,9 +203,23 @@ pub(crate) fn pointer_context() -> Option<PointerContext> {
     }
     // SAFETY: child is a native HWND; GA_ROOT preserves owned popup identity.
     let window = unsafe { GetAncestor(child, GA_ROOT) };
-    if window.is_null() {
-        return None;
-    }
+    (!window.is_null()).then_some(window)
+}
+
+pub(crate) fn pointer_root_window() -> Option<u64> {
+    root_window_under_pointer().map(|window| window as usize as u64)
+}
+
+pub(crate) fn pointer_over_focused_process() -> bool {
+    let Some(pointer) = root_window_under_pointer().and_then(process_id) else {
+        return false;
+    };
+    // SAFETY: GetForegroundWindow has no preconditions and does not change focus.
+    process_id(unsafe { GetForegroundWindow() }) == Some(pointer)
+}
+
+pub(crate) fn pointer_context() -> Option<PointerContext> {
+    let window = root_window_under_pointer()?;
     let process_id = process_id(window);
     if let Some(last) = LAST_RESOLVED
         .lock()

@@ -795,6 +795,7 @@ impl Orchestrator {
             gestures,
             pointer_target,
             selected_device: key.map(str::to_owned),
+            scroll_delivery: self.config.scroll_delivery(app),
             ..HookMaps::default()
         }
     }
