@@ -361,9 +361,9 @@ mod tests {
 
     #[gpui::test]
     fn every_offered_control_gets_a_row_that_keeps_its_toggle_inside(cx: &mut TestAppContext) {
-        // Finnish carries the longest backlight captions.
+        // English carries the longer backlight captions of the bundled catalogs.
         let _locale = LOCALE_LOCK.lock().unwrap();
-        rust_i18n::set_locale("fi");
+        rust_i18n::set_locale("en");
         let cx = draw(
             cx,
             reading(

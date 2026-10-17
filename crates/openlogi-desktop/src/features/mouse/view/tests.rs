@@ -43,7 +43,7 @@ fn long_bindings_stay_inside_their_label_card(cx: &mut TestAppContext) {
     // English defaults are enough to trip it under the test text system
     // ("Forward (Button 5)" measures a 206px row over a 156px card). Pinned
     // to English under the lock: another test in this binary leaves the
-    // process locale at zh-CN, whose labels are short enough to fit and
+    // process locale at zh-TW, whose labels are short enough to fit and
     // would have made this a false pass.
     let _locale = LOCALE_LOCK.lock().unwrap();
     rust_i18n::set_locale("en");

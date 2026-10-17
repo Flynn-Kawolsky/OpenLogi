@@ -250,13 +250,13 @@ fn language_switch_rebuilds_menus_after_the_state_update(cx: &mut gpui::TestAppC
 
     cx.update(|cx| {
         AppState::set_global(cx.new(|_| state), cx);
-        AppState::apply(cx, |state| state.commit_language(Some("zh-CN".into())));
+        AppState::apply(cx, |state| state.commit_language(Some("zh-TW".into())));
     });
 
     cx.read(|cx| {
         assert_eq!(
             AppState::try_read(cx).and_then(AppState::language),
-            Some("zh-CN")
+            Some("zh-TW")
         );
     });
 }

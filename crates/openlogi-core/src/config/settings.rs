@@ -250,10 +250,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub asset_source: AssetSourcePreference,
     /// UI language as a BCP-47-ish locale code matching the GUI's bundled
-    /// locales (e.g. `"en"`, `"de"`, `"pt-BR"`, `"zh-CN"`, `"zh-TW"`; see the
-    /// GUI's `i18n::SUPPORTED`). `None` means "follow the system locale", which
-    /// the GUI resolves at startup. Stored here so a user's explicit choice
-    /// survives restarts regardless of the OS setting.
+    /// locales (`"en"` or `"zh-TW"`; see `locale::SUPPORTED`). `None` means
+    /// "follow the system locale", which the GUI resolves at startup. Stored
+    /// here so a user's explicit choice survives restarts regardless of the OS
+    /// setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     /// Thumb-wheel responsiveness. It scales both the speed of the wheel's

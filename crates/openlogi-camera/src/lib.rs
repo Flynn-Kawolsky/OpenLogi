@@ -13,9 +13,10 @@
 //! [`openlogi_device_registry::camera`] instead.
 //!
 //! macOS has the full backend (AVFoundation capture + IOKit UVC controls);
-//! Windows matches it with Media Foundation capture and DirectShow controls;
-//! Linux uses V4L2 for both, through the kernel's `uvcvideo` driver. Other
-//! platforms return an empty list.
+//! Windows matches it with Media Foundation capture and DirectShow controls
+//! behind the off-by-default `windows-backend` feature; Linux uses V4L2 for
+//! both, through the kernel's `uvcvideo` driver. Other platforms — and Windows
+//! without that feature — compile a stub that returns an empty list.
 
 use openlogi_device_registry::camera::find_unnamed_camera;
 use serde::Serialize;
@@ -37,12 +38,12 @@ pub use capture_macos::{
     request_camera_access, start_stream,
 };
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 mod com_windows;
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 mod capture_windows;
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 pub use capture_windows::{
     CameraStream, camera_access_granted, camera_authorization, capture_frame,
     request_camera_access, start_stream,
@@ -55,9 +56,9 @@ pub use uvc_macos::{
     apply_settings, control_range, control_ranges, read_camera_state, set_auto, set_control,
 };
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 mod uvc_windows;
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 pub use uvc_windows::{
     apply_settings, control_range, control_ranges, read_camera_state, set_auto, set_control,
 };
@@ -80,7 +81,11 @@ pub use uvc_linux::{
     apply_settings, control_range, control_ranges, read_camera_state, set_auto, set_control,
 };
 
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "windows", feature = "windows-backend"),
+    target_os = "linux"
+)))]
 mod capture {
     //! Stub capture backend for platforms without one.
     use std::sync::Arc;
@@ -133,13 +138,21 @@ mod capture {
     /// Stub: no consent prompt exists on this platform.
     pub fn request_camera_access() {}
 }
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "windows", feature = "windows-backend"),
+    target_os = "linux"
+)))]
 pub use capture::{
     CameraStream, camera_access_granted, camera_authorization, capture_frame,
     request_camera_access, start_stream,
 };
 
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "windows", feature = "windows-backend"),
+    target_os = "linux"
+)))]
 mod uvc {
     //! Stub UVC control backend for platforms without one.
     use crate::controls::{AutoToggle, CameraControl, CameraState, ControlError, ControlRange};
@@ -178,7 +191,11 @@ mod uvc {
         Err(ControlError::Unsupported)
     }
 }
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "windows", feature = "windows-backend"),
+    target_os = "linux"
+)))]
 pub use uvc::{
     apply_settings, control_range, control_ranges, read_camera_state, set_auto, set_control,
 };
@@ -270,7 +287,7 @@ impl Camera {
 pub const fn capture_supported() -> bool {
     cfg!(any(
         target_os = "macos",
-        target_os = "windows",
+        all(target_os = "windows", feature = "windows-backend"),
         target_os = "linux"
     ))
 }
@@ -325,7 +342,7 @@ fn enumerate_all() -> Vec<Camera> {
         .collect()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "windows-backend"))]
 fn enumerate_all() -> Vec<Camera> {
     uvc_windows::enumerate()
 }
@@ -335,7 +352,11 @@ fn enumerate_all() -> Vec<Camera> {
     linux::cameras()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "windows", feature = "windows-backend"),
+    target_os = "linux"
+)))]
 fn enumerate_all() -> Vec<Camera> {
     Vec::new()
 }

@@ -4,30 +4,11 @@ base_path: ".."
 
 preserve_hierarchy: true
 
+# Only the catalogs this build ships (openlogi_core::locale::SUPPORTED); a
+# language exported here would land a `locales/*.toml` the binaries embed but
+# the Settings picker never offers.
 export_languages:
-  - be
-  - cs
-  - da
-  - de
-  - es-ES
-  - fr
-  - it
-  - nl
-  - "no"
-  - pl
-  - pt-PT
-  - pt-BR
-  - fi
-  - sv-SE
-  - tr
-  - el
-  - ru
-  - uk
-  - ja
-  - zh-CN
-  - zh-HK
   - zh-TW
-  - ko
 
 files:
   - source: "/crates/openlogi-ui/locales/en.toml"
@@ -36,26 +17,4 @@ files:
     update_option: "update_as_unapproved"
     languages_mapping:
       locale:
-        be: "be"
-        cs: "cs"
-        da: "da"
-        de: "de"
-        es-ES: "es"
-        fr: "fr"
-        it: "it"
-        nl: "nl"
-        "no": "nb"
-        pl: "pl"
-        pt-PT: "pt-PT"
-        pt-BR: "pt-BR"
-        fi: "fi"
-        sv-SE: "sv"
-        tr: "tr"
-        el: "el"
-        ja: "ja"
-        ru: "ru"
-        uk: "uk"
-        zh-CN: "zh-CN"
-        zh-HK: "zh-HK"
         zh-TW: "zh-TW"
-        ko: "ko"

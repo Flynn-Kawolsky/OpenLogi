@@ -20,39 +20,13 @@
 use fluent_langneg::{LanguageIdentifier, NegotiationStrategy, negotiate_languages};
 
 /// Locales the GUI ships, as `(code, native name)`. The codes match the
-/// `locales/*.toml` filenames; a subset (`en`, `zh-CN`, `zh-HK`, `it`) also
-/// matches gpui-component's bundled `ui.yml`, so choosing one localizes the
-/// framework's own widgets too. Under a locale the framework doesn't bundle, our
-/// app strings localize but gpui-component's built-in widget strings fall back
-/// to English.
-/// Order here is the order shown in the Settings picker (after "Follow system"):
-/// native-name alphabetical within each script.
-pub const SUPPORTED: &[(&str, &str)] = &[
-    ("be", "Беларуская"),
-    ("cs", "Čeština"),
-    ("da", "Dansk"),
-    ("de", "Deutsch"),
-    ("en", "English"),
-    ("es", "Español"),
-    ("fr", "Français"),
-    ("it", "Italiano"),
-    ("nl", "Nederlands"),
-    ("nb", "Norsk"),
-    ("pl", "Polski"),
-    ("pt-PT", "Português"),
-    ("pt-BR", "Português - Brasil"),
-    ("fi", "Suomi"),
-    ("sv", "Svenska"),
-    ("tr", "Türkçe"),
-    ("el", "Ελληνικά"),
-    ("ru", "Русский"),
-    ("uk", "Українська"),
-    ("ja", "日本語"),
-    ("zh-CN", "简体中文"),
-    ("zh-HK", "繁體中文（香港）"),
-    ("zh-TW", "正體中文（臺灣）"),
-    ("ko", "한국어"),
-];
+/// `locales/*.toml` filenames, and both also match gpui-component's bundled
+/// `ui.yml`, so choosing one localizes the framework's own widgets too.
+///
+/// This build ships English and Traditional Chinese (Taiwan) only; every other
+/// language resolves to English (see `match_supported`).
+/// Order here is the order shown in the Settings picker (after "Follow system").
+pub const SUPPORTED: &[(&str, &str)] = &[("en", "English"), ("zh-TW", "正體中文（臺灣）")];
 
 /// Resolve the locale to apply, preferring an explicit stored `setting`, then
 /// the system locale, and finally `"en"`. An unrecognized stored code is
@@ -69,45 +43,29 @@ fn resolve(setting: Option<&str>) -> &'static str {
 }
 
 /// Collapse an arbitrary BCP-47 locale onto one of [`SUPPORTED`], or `None`,
-/// by matching its primary subtag. Three families need more than a primary-tag
-/// match:
-/// - `zh` is decided by examining all subtags for script and region: explicit
-///   `Hans` → `zh-CN` (always wins); `hk` / `mo` region → `zh-HK`; `tw` region
-///   or bare `Hant` script → `zh-TW`; no recognized indicator → `zh-CN`. So
-///   `zh-Hans-HK` stays Simplified (script wins), `zh-Hant-HK` resolves to Hong
-///   Kong (region wins over generic script), and bare `zh-Hant` → Taiwan.
-/// - `pt` splits on region: a `br` subtag → `pt-BR`, otherwise `pt-PT`.
-/// - Norwegian's `nb` / `nn` / the macrolanguage `no` all fold onto `nb`
-///   (the catalog ships Bokmål, shown as "Norsk").
+/// by matching its primary subtag.
+///
+/// Chinese is decided by [`chinese_locale`] and never reaches the lookup:
+/// plain negotiation would happily hand `zh-CN` the `zh-TW` catalog by
+/// language alone, serving a Simplified-Chinese reader Traditional text.
 fn match_supported(code: &str) -> Option<&'static str> {
     let requested = code.replace('_', "-").parse::<LanguageIdentifier>().ok()?;
-    special_locale(&requested).or_else(|| lookup_supported(&requested))
+    if requested.language.as_str() == "zh" {
+        return chinese_locale(&requested);
+    }
+    lookup_supported(&requested)
 }
 
-fn special_locale(requested: &LanguageIdentifier) -> Option<&'static str> {
-    match requested.language.as_str() {
-        "nb" | "nn" | "no" => Some("nb"),
-        "pt" => {
-            if requested
-                .region
-                .as_ref()
-                .is_some_and(|region| region.as_str() == "BR")
-            {
-                Some("pt-BR")
-            } else {
-                Some("pt-PT")
-            }
-        }
-        "zh" => {
-            let script = requested.script.as_ref().map(ToString::to_string);
-            let region = requested.region.as_ref().map(ToString::to_string);
-            match (script.as_deref(), region.as_deref()) {
-                (Some("Hans"), _) => Some("zh-CN"),
-                (_, Some("HK" | "MO")) => Some("zh-HK"),
-                (_, Some("TW")) | (Some("Hant"), _) => Some("zh-TW"),
-                _ => Some("zh-CN"),
-            }
-        }
+/// Only Taiwan's Traditional Chinese has a catalog: a `tw` region, or a bare
+/// `Hant` script with no region, → `zh-TW`. An explicit `Hans` script always
+/// wins (so `zh-Hans-TW` stays Simplified), and Simplified, Hong Kong / Macau,
+/// and region-less `zh` have no catalog, so they resolve to `None` — English.
+fn chinese_locale(requested: &LanguageIdentifier) -> Option<&'static str> {
+    let script = requested.script.as_ref().map(ToString::to_string);
+    let region = requested.region.as_ref().map(ToString::to_string);
+    match (script.as_deref(), region.as_deref()) {
+        (Some("Hans"), _) => None,
+        (_, Some("TW")) | (Some("Hant"), None) => Some("zh-TW"),
         _ => None,
     }
 }
@@ -152,46 +110,43 @@ mod tests {
 
     #[test]
     fn maps_locale_variants() {
-        assert_eq!(match_supported("zh-Hans-CN"), Some("zh-CN"));
-        assert_eq!(match_supported("zh-CN"), Some("zh-CN"));
-        assert_eq!(match_supported("zh-Hans-HK"), Some("zh-CN"));
         assert_eq!(match_supported("zh-Hant-TW"), Some("zh-TW"));
         assert_eq!(match_supported("zh-TW"), Some("zh-TW"));
+        assert_eq!(match_supported("zh_TW"), Some("zh-TW"));
         assert_eq!(match_supported("zh-Hant"), Some("zh-TW"));
-        assert_eq!(match_supported("zh-HK"), Some("zh-HK"));
-        assert_eq!(match_supported("zh-Hant-HK"), Some("zh-HK"));
-        assert_eq!(match_supported("cs"), Some("cs"));
-        assert_eq!(match_supported("cs-CZ"), Some("cs"));
-        assert_eq!(match_supported("cs_CZ"), Some("cs"));
-        assert_eq!(match_supported("ja"), Some("ja"));
-        assert_eq!(match_supported("ja-JP"), Some("ja"));
-        assert_eq!(match_supported("ru"), Some("ru"));
-        assert_eq!(match_supported("ru-RU"), Some("ru"));
-        assert_eq!(match_supported("uk"), Some("uk"));
-        assert_eq!(match_supported("uk-UA"), Some("uk"));
+        assert_eq!(match_supported("en"), Some("en"));
         assert_eq!(match_supported("en-US"), Some("en"));
-        assert_eq!(match_supported("it"), Some("it"));
-        assert_eq!(match_supported("it-IT"), Some("it"));
-        assert_eq!(match_supported("fr-FR"), Some("fr"));
-        assert_eq!(match_supported("de"), Some("de"));
-        assert_eq!(match_supported("ko-KR"), Some("ko"));
-        assert_eq!(match_supported("pt"), Some("pt-PT"));
-        assert_eq!(match_supported("pt-PT"), Some("pt-PT"));
-        assert_eq!(match_supported("pt-BR"), Some("pt-BR"));
-        assert_eq!(match_supported("tr"), Some("tr"));
-        assert_eq!(match_supported("tr-TR"), Some("tr"));
-        assert_eq!(match_supported("nb-NO"), Some("nb"));
-        assert_eq!(match_supported("no"), Some("nb"));
-        assert_eq!(match_supported("nn"), Some("nb"));
-        assert_eq!(match_supported("be"), Some("be"));
-        assert_eq!(match_supported("be-BY"), Some("be"));
+        assert_eq!(match_supported("en_GB"), Some("en"));
         assert_eq!(match_supported("klingon"), None);
     }
 
     #[test]
+    fn languages_without_a_catalog_fall_back_to_english() {
+        // Chinese variants with no catalog must not borrow `zh-TW`'s by
+        // language alone.
+        for code in [
+            "zh",
+            "zh-CN",
+            "zh-Hans",
+            "zh-Hans-CN",
+            "zh-Hans-TW",
+            "zh-HK",
+            "zh-Hant-HK",
+            "zh-MO",
+        ] {
+            assert_eq!(match_supported(code), None, "{code}");
+        }
+        // Catalogs this build no longer ships.
+        for code in ["de", "fr-FR", "ja", "pt-BR", "nb-NO", "cs_CZ"] {
+            assert_eq!(match_supported(code), None, "{code}");
+        }
+        assert_eq!(resolve(Some("zh-CN")), resolve(None));
+    }
+
+    #[test]
     fn explicit_setting_wins_over_system() {
-        assert_eq!(resolve(Some("zh-CN")), "zh-CN");
-        assert_eq!(resolve(Some("cs")), "cs");
+        assert_eq!(resolve(Some("zh-TW")), "zh-TW");
+        assert_eq!(resolve(Some("en")), "en");
         // An unknown stored code falls through to system/`en`, never panics.
         assert!(
             SUPPORTED
