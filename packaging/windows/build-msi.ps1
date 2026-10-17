@@ -56,9 +56,12 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $Wxs = Join-Path $PSScriptRoot 'OpenLogi.wxs'
 
 # Native tools report failure through $LASTEXITCODE, which
-# $ErrorActionPreference does not see.
+# $ErrorActionPreference does not see. Windows PowerShell 5.1 also turns any
+# stderr line (cargo's progress output) into a terminating error under 'Stop'
+# once output is redirected, so relax it for the call and judge by exit code.
 function Invoke-Native {
     param([string]$What, [scriptblock]$Command)
+    $ErrorActionPreference = 'Continue'
     & $Command
     if ($LASTEXITCODE -ne 0) {
         throw "$What failed with exit code $LASTEXITCODE"
