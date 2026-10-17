@@ -38,6 +38,13 @@ pub(crate) struct Args {
     /// `.msi` and installs it via gpui-updater's staged msiexec flow.
     #[arg(long)]
     include_windows: bool,
+    /// Publish a Windows-only manifest for a fork's GitHub Releases, for
+    /// example `owner/OpenLogi`: asset URLs use GitHub's
+    /// `/releases/download/<tag>/` layout under `--base-url`, the release link
+    /// points at that repository, and the macOS DMG gate is replaced by a
+    /// Windows one. Implies `--include-windows`.
+    #[arg(long)]
+    github_repo: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -80,17 +87,36 @@ struct Classified {
 pub(crate) fn run(args: &Args) -> Result<()> {
     let version = args.tag.strip_prefix('v').unwrap_or(&args.tag).to_string();
     let release_base = format!(
-        "{}/releases/{}",
+        "{}/releases/{}{}",
         args.base_url.trim_end_matches('/'),
+        if args.github_repo.is_some() {
+            "download/"
+        } else {
+            ""
+        },
         args.tag
     );
-    let assets = collect_assets(&args.dist, &release_base, args.include_windows)?;
+    let assets = collect_assets(
+        &args.dist,
+        &release_base,
+        args.include_windows || args.github_repo.is_some(),
+    )?;
     // The DMGs are the publish gate's guaranteed artifact set; the Windows
     // legs are best-effort per arch (a failed leg publishes without them), so
-    // their absence must not sink the whole manifest.
-    if !assets.iter().any(|asset| asset.os == "macos") {
-        bail!("no architecture-specific DMG assets found for manifest");
+    // their absence must not sink the whole manifest. A fork's Windows-only
+    // feed gates on its MSIs instead.
+    let (gate_os, gate_error) = if args.github_repo.is_some() {
+        ("windows", "no Windows MSI assets found for manifest")
+    } else {
+        (
+            "macos",
+            "no architecture-specific DMG assets found for manifest",
+        )
+    };
+    if !assets.iter().any(|asset| asset.os == gate_os) {
+        bail!(gate_error);
     }
+    let repo = args.github_repo.as_deref().unwrap_or("AprilNEA/OpenLogi");
 
     let manifest = Manifest {
         schema_version: 1,
@@ -101,10 +127,7 @@ pub(crate) fn run(args: &Args) -> Result<()> {
         published_at: OffsetDateTime::from(SystemTime::now())
             .format(&Rfc3339)
             .context("could not format current timestamp")?,
-        release_url: format!(
-            "https://github.com/AprilNEA/OpenLogi/releases/tag/{}",
-            args.tag
-        ),
+        release_url: format!("https://github.com/{repo}/releases/tag/{}", args.tag),
         assets,
     };
 

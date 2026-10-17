@@ -109,3 +109,37 @@ fn collect_assets_skips_linux_packages_and_foreign_archives() {
 
     assert!(assets.is_empty());
 }
+
+#[test]
+fn github_repo_manifest_uses_release_download_urls_and_gates_on_windows() {
+    let dist = tempfile::tempdir().unwrap();
+    let msi = "OpenLogi-v0.8.14010-windows-x86_64.msi";
+    fs_err::write(dist.path().join(msi), b"msi").unwrap();
+    fs_err::write(dist.path().join(format!("{msi}.minisig")), b"signature").unwrap();
+    let output = dist.path().join("latest.json");
+    let args = |dist: &Path| Args {
+        dist: dist.to_path_buf(),
+        output: output.clone(),
+        tag: "v0.8.14010".to_owned(),
+        base_url: "https://github.com/owner/OpenLogi".to_owned(),
+        include_windows: false,
+        github_repo: Some("owner/OpenLogi".to_owned()),
+    };
+
+    run(&args(dist.path())).unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs_err::read_to_string(&output).unwrap()).unwrap();
+
+    assert_eq!(
+        manifest["assets"][0]["url"],
+        format!("https://github.com/owner/OpenLogi/releases/download/v0.8.14010/{msi}")
+    );
+    assert_eq!(
+        manifest["release_url"],
+        "https://github.com/owner/OpenLogi/releases/tag/v0.8.14010"
+    );
+    assert_eq!(manifest["version"], "0.8.14010");
+
+    let empty = tempfile::tempdir().unwrap();
+    assert!(run(&args(empty.path())).is_err());
+}
