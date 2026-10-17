@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use gpui::{
-    Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement, Role,
+    App, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement, Role,
     StatefulInteractiveElement as _, Styled, div, prelude::FluentBuilder as _, px, rgb, svg,
 };
 use gpui_base::Button as BaseButton;
@@ -13,10 +13,14 @@ use gpui_component::{
     input::InputState, scroll::ScrollableElement as _, v_flex,
 };
 use openlogi_core::binding::{Action, ButtonId, GestureDirection, default_binding};
+use openlogi_core::scroll::ScrollDelivery;
 
 use super::force_sensing::{PressForce, force_sensing_row};
 use super::hotspots::MouseControlId;
-use super::thumbwheel::ThumbwheelPreset;
+use super::thumbwheel::{
+    ScrollMethodChoice, ThumbwheelPreset, scroll_method_description_key,
+    scroll_method_translation_key,
+};
 use super::view::MouseModelView;
 use crate::features::binding_editor::{
     GESTURE_BUTTON_ICON, PickFn, action_icon_path, action_rows_matching, application_editor,
@@ -47,11 +51,14 @@ pub(super) struct BindingInspectorData<'a> {
     /// [`ForceSensingFacts::current`](super::force_sensing::ForceSensingFacts::current)
     /// says it shows.
     pub press_force: Option<PressForce<'a>>,
+    /// The open per-app profile's horizontal scroll method, where the
+    /// platform offers one.
+    pub scroll_method: Option<ScrollMethodChoice>,
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct ActionPickerContext<'a> {
-    pub open: bool,
+    pub list: InspectorList,
     pub search: &'a Entity<InputState>,
     pub shortcut_input: &'a Entity<InputState>,
     pub application_input: &'a Entity<InputState>,
@@ -72,6 +79,36 @@ pub(super) struct InvalidDrafts {
     pub shortcut: bool,
     pub application: bool,
     pub command: bool,
+}
+
+impl ActionPickerContext<'_> {
+    /// Whether the action list (the thumb wheel's preset list) is open.
+    fn actions_open(self) -> bool {
+        self.list == InspectorList::Actions
+    }
+}
+
+/// The inspector list that is expanded. Only one is open at a time, so
+/// opening one closes the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InspectorList {
+    Closed,
+    /// The action library, or the thumb wheel's preset list.
+    Actions,
+    /// The thumb wheel's horizontal scroll methods.
+    ScrollMethods,
+}
+
+impl InspectorList {
+    /// `list` opened, or closed again when it is already the open one.
+    pub(super) fn toggled(self, list: Self) -> Self {
+        if self == list { Self::Closed } else { list }
+    }
+
+    /// Closed, if `list` is the open one.
+    pub(super) fn closing(self, list: Self) -> Self {
+        if self == list { Self::Closed } else { self }
+    }
 }
 
 /// Whether the custom shortcut editor records a tapped or a held chord.
@@ -100,12 +137,15 @@ pub(super) fn binding_inspector(
         None => empty_inspector(
             data.editing_app,
             data.overridden.map_or(0, BTreeMap::len),
+            data.scroll_method
+                .is_some_and(|choice| !choice.current.is_native()),
             pal,
         ),
         Some(MouseControlId::ThumbwheelRotation) => thumbwheel_inspector(
             data.bindings,
             data.editing_app,
             data.overridden,
+            data.scroll_method,
             picker,
             pal,
         ),
@@ -131,8 +171,17 @@ pub(super) fn binding_inspector(
         )
 }
 
-fn empty_inspector(app: Option<&str>, override_count: usize, pal: Palette) -> gpui::Div {
+fn empty_inspector(
+    app: Option<&str>,
+    override_count: usize,
+    scroll_method: bool,
+    pal: Palette,
+) -> gpui::Div {
     let summary = match (app, override_count) {
+        (Some(app), 0) if scroll_method => tr!(
+            "profiles.app_profile_scroll_method_only",
+            app => app.to_string()
+        ),
         (Some(app), 0) => tr!(
             "profiles.app_profile_no_overrides",
             app => app.to_string()
@@ -257,7 +306,7 @@ fn button_inspector(
             data.press_force
                 .map(|press_force| force_sensing_row(press_force, pal)),
         )
-        .when(picker.open, |panel| {
+        .when(picker.actions_open(), |panel| {
             panel.child(action_library(
                 "inspector-action",
                 Some(&action),
@@ -391,7 +440,7 @@ fn inherited_gesture_inspector(
                     });
                 }),
         )
-        .when(picker.open, |panel| {
+        .when(picker.actions_open(), |panel| {
             panel.child(action_library(
                 "inspector-gesture-override",
                 None,
@@ -462,7 +511,7 @@ fn gesture_inspector(
             data.press_force
                 .map(|press_force| force_sensing_row(press_force, pal)),
         )
-        .when(picker.open, |panel| {
+        .when(picker.actions_open(), |panel| {
             panel.child(action_library(
                 "inspector-gesture-action",
                 Some(&current),
@@ -555,6 +604,7 @@ fn thumbwheel_inspector(
     bindings: &BTreeMap<ButtonId, Action>,
     editing_app: Option<&str>,
     overridden: Option<&BTreeMap<ButtonId, Action>>,
+    scroll_method: Option<ScrollMethodChoice>,
     picker: ActionPickerContext<'_>,
     pal: Palette,
 ) -> gpui::Div {
@@ -595,7 +645,7 @@ fn thumbwheel_inspector(
             picker,
             pal,
         ))
-        .when(picker.open, |panel| {
+        .when(picker.actions_open(), |panel| {
             panel.child(
                 v_flex()
                     .gap_1()
@@ -657,6 +707,142 @@ fn thumbwheel_inspector(
                     }),
             )
         })
+        .children(scroll_method.map(|choice| scroll_method_picker(choice, picker, pal)))
+}
+
+/// How horizontal scrolling reaches the open application, for one that
+/// ignores the native horizontal wheel. The rule is per application, so the
+/// state layer offers it only in a per-app profile.
+fn scroll_method_picker(
+    choice: ScrollMethodChoice,
+    picker: ActionPickerContext<'_>,
+    pal: Palette,
+) -> impl IntoElement {
+    let open = picker.list == InspectorList::ScrollMethods;
+    let toggle = picker.view.clone();
+    v_flex()
+        .gap_2()
+        .child(
+            selection_card_face(
+                "inspector-scroll-method",
+                tr!("pointer.horizontal_scroll_method"),
+                "action-icons/chevrons-right.svg",
+                tr!(scroll_method_translation_key(choice.current)),
+                open,
+                pal,
+            )
+            .on_click(move |_, _, cx| {
+                toggle.update(cx, |view, cx| {
+                    view.toggle_scroll_method_picker();
+                    cx.notify();
+                });
+            }),
+        )
+        .child(
+            div()
+                .text_caption()
+                .text_color(pal.text_muted)
+                .child(tr!("pointer.horizontal_scroll_method_description")),
+        )
+        .when(open, |panel| {
+            panel.child(
+                v_flex()
+                    .gap_0p5()
+                    .children(ScrollDelivery::ALL.into_iter().enumerate().map(
+                        |(index, delivery)| {
+                            scroll_method_row(index, delivery, choice.current, picker.view, pal)
+                        },
+                    )),
+            )
+        })
+        .children(scroll_method_suggestion(choice, picker.view, pal))
+}
+
+fn scroll_method_row(
+    index: usize,
+    delivery: ScrollDelivery,
+    current: ScrollDelivery,
+    view: &Entity<MouseModelView>,
+    pal: Palette,
+) -> MenuRow {
+    let selected = delivery == current;
+    let view = view.clone();
+    let label = tr!(scroll_method_translation_key(delivery));
+    MenuRow::new(("inspector-scroll-method", index))
+        .debug_selector(move || format!("inspector-scroll-method-{delivery:?}"))
+        .selected(selected)
+        .role(Role::Button)
+        .aria_label(label.clone())
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(div().text_body().child(label))
+                .child(
+                    div()
+                        .text_caption()
+                        .text_color(pal.text_muted)
+                        .child(tr!(scroll_method_description_key(delivery))),
+                ),
+        )
+        .when(selected, |row| {
+            row.child(
+                Icon::new(IconName::Check)
+                    .size_3()
+                    .text_color(rgb(ACCENT_BLUE)),
+            )
+        })
+        .on_click(move |_, _, cx| pick_scroll_method(&view, delivery, cx))
+}
+
+/// The "Suggested for this app" affordance: the built-in method for a known
+/// application, applied only when the user clicks it, plus a reminder to
+/// verify a method the built-in table is unsure of.
+fn scroll_method_suggestion(
+    choice: ScrollMethodChoice,
+    view: &Entity<MouseModelView>,
+    pal: Palette,
+) -> Option<impl IntoElement> {
+    let suggestion = choice.suggestion?;
+    let offered = suggestion.delivery != choice.current;
+    if !offered && !suggestion.needs_verification {
+        return None;
+    }
+    let view = view.clone();
+    let caption =
+        |text: gpui::SharedString| div().text_caption().text_color(pal.text_muted).child(text);
+    Some(
+        v_flex()
+            .gap_1()
+            .when(offered, |block| {
+                block.child(caption(tr!(
+                    "pointer.suggested_scroll_method",
+                    method => tr!(scroll_method_translation_key(suggestion.delivery)).to_string()
+                )))
+            })
+            .when(suggestion.needs_verification, |block| {
+                block.child(caption(tr!("pointer.scroll_method_needs_verification")))
+            })
+            .when(offered, |block| {
+                block.child(
+                    control_button("inspector-scroll-method-suggested")
+                        .debug_selector(|| "inspector-scroll-method-suggested".into())
+                        .w_full()
+                        .label(tr!("pointer.use_suggested_scroll_method"))
+                        .on_click(move |_, _, cx| {
+                            pick_scroll_method(&view, suggestion.delivery, cx);
+                        }),
+                )
+            }),
+    )
+}
+
+fn pick_scroll_method(view: &Entity<MouseModelView>, delivery: ScrollDelivery, cx: &mut App) {
+    AppState::apply(cx, |state| state.commit_scroll_delivery(delivery));
+    view.update(cx, |view, cx| {
+        view.close_scroll_method_picker();
+        cx.notify();
+    });
 }
 
 fn inspector_heading(
@@ -711,12 +897,39 @@ fn selection_card(
 ) -> impl IntoElement {
     let toggle = picker.view.clone();
     let search = picker.search.clone();
-    let opening = !picker.open;
+    let opening = !picker.actions_open();
+    selection_card_face(id, caption, icon, value, picker.actions_open(), pal).on_click(
+        move |_, window, cx| {
+            if opening {
+                search.update(cx, |search, cx| search.set_value("", window, cx));
+            }
+            toggle.update(cx, |view, cx| {
+                if opening {
+                    view.clear_custom_action_drafts(window, cx);
+                }
+                view.toggle_action_picker();
+                cx.notify();
+            });
+        },
+    )
+}
+
+/// The card a picker opens from: the current value under its caption, with a
+/// chevron showing whether the picker's list is `open`. The caller wires the
+/// click that toggles it.
+fn selection_card_face(
+    id: &'static str,
+    caption: gpui::SharedString,
+    icon: &'static str,
+    value: gpui::SharedString,
+    open: bool,
+    pal: Palette,
+) -> BaseButton {
     let accessible_label = value.clone();
     BaseButton::new(id)
         .debug_selector(move || id.to_string())
         .accessibility_label(accessible_label)
-        .aria_expanded(picker.open)
+        .aria_expanded(open)
         .flex()
         .flex_col()
         .items_stretch()
@@ -756,7 +969,7 @@ fn selection_card(
                 )
                 .child(
                     svg()
-                        .path(if picker.open {
+                        .path(if open {
                             "action-icons/chevrons-up.svg"
                         } else {
                             "action-icons/chevrons-down.svg"
@@ -766,18 +979,6 @@ fn selection_card(
                         .text_color(pal.text_muted),
                 ),
         )
-        .on_click(move |_, window, cx| {
-            if opening {
-                search.update(cx, |search, cx| search.set_value("", window, cx));
-            }
-            toggle.update(cx, |view, cx| {
-                if opening {
-                    view.clear_custom_action_drafts(window, cx);
-                }
-                view.toggle_action_picker();
-                cx.notify();
-            });
-        })
 }
 
 fn action_library(
@@ -1012,6 +1213,7 @@ mod tests {
             editing_app: None,
             overridden: None,
             press_force: None,
+            scroll_method: None,
         }
     }
 
