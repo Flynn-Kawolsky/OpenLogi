@@ -75,7 +75,8 @@ jobs:
               git rebase --abort || true
               title="slim: rebase onto $latest needs manual resolution"
               if ! gh issue list --state open --search "$title in:title" --json number --jq '.[0].number' | grep -q .; then
-                gh issue create --title "$title" --body "The slim commits do not apply cleanly on $latest (based on $base). Rebase \`slim\` onto $latest by hand and push; the next run publishes it."
+                gh issue create --title "$title" --body "The slim commits do not apply cleanly on $latest (based on $base). Rebase \`slim\` onto $latest by hand and push; the next run publishes it." \
+                  || echo "::warning::could not open issue"
               fi
               echo "::error::rebase onto $latest failed"
               exit 1
